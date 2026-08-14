@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react'
 import { motion } from 'motion/react'
 import {
   Check,
   ChevronDown,
   Clock3,
   Dumbbell,
-  FileVideo,
-  LoaderCircle,
   Home,
   ListMusic,
   Music2,
@@ -28,14 +26,15 @@ import {
 } from 'lucide-react'
 import { initialExercises, initialTracks } from './data'
 import { getMedia, listMedia, readLocal, removeMedia, saveMedia, writeLocal } from './services/storage'
-import { analyzeDanceVideo, type AnalysisSettings } from './services/analysisService'
-import { DANCE_ANALYSIS_SYSTEM_PROMPT, PERSONAL_STYLE_KNOWLEDGE_TEMPLATE } from './services/analysisPrompt'
-import type { AnalysisReport, Exercise, MusicTrack, StoredMedia, TabId } from './types'
+import { DANCE_AGENT_SYSTEM_PROMPT, PERSONAL_STYLE_KNOWLEDGE_TEMPLATE, type AssistantSettings } from './services/assistantSettings'
+import { AgentWorkspace } from './components/AgentWorkspace'
+import { TrainingSession } from './components/TrainingSession'
+import type { AssistantResult, Exercise, MusicTrack, TabId } from './types'
 
 const ASSET = `${import.meta.env.BASE_URL}assets`
 const dateLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date())
 const dayKey = new Date().toISOString().slice(0, 10)
-const MUSIC_LIBRARY_VERSION = 'local-mp3-v2'
+const MUSIC_LIBRARY_VERSION = 'local-mp3-v3'
 
 function chorusWindow(track: MusicTrack) {
   const start = Math.max(0, track.chorusStart ?? 45)
@@ -57,6 +56,23 @@ function randomIndex(length: number) {
 type Toast = { id: number; message: string }
 type PlayerMode = 'dance' | 'listen'
 type ListenMode = 'shuffle' | 'sequential' | 'single'
+type DanceLaunchRequest = { id: string; trackIds: string[] }
+function restoreAssistantResults() {
+  return readLocal<AssistantResult[]>('assistant-results', [])
+    .filter((item) => item.kind === 'training')
+}
+
+function restoreAssistantSettings(): AssistantSettings {
+  const saved = readLocal<Partial<AssistantSettings>>('assistant-settings', readLocal('analysis-settings', {}))
+  return {
+    systemPrompt: saved.systemPrompt || DANCE_AGENT_SYSTEM_PROMPT,
+    knowledge: {
+      bodyProfile: saved.knowledge?.bodyProfile || PERSONAL_STYLE_KNOWLEDGE_TEMPLATE.bodyProfile,
+      preferences: saved.knowledge?.preferences || PERSONAL_STYLE_KNOWLEDGE_TEMPLATE.preferences,
+      constraints: saved.knowledge?.constraints || PERSONAL_STYLE_KNOWLEDGE_TEMPLATE.constraints,
+    },
+  }
+}
 
 function App() {
   const [tab, setTab] = useState<TabId>('today')
@@ -73,14 +89,16 @@ function App() {
       return initialTracks
     }
     const saved = readLocal<MusicTrack[]>('music-tracks', [])
-    return saved.length ? saved : initialTracks
+    return saved.length ? saved.map((track) => {
+      const seed = initialTracks.find((item) => item.id === track.id)
+      return { ...seed, ...track, durationSeconds: track.durationSeconds ?? seed?.durationSeconds }
+    }) : initialTracks
   })
-  const [reports, setReports] = useState<AnalysisReport[]>(() => readLocal('analysis-reports', []))
-  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings>(() => readLocal('analysis-settings', { systemPrompt: DANCE_ANALYSIS_SYSTEM_PROMPT, knowledge: PERSONAL_STYLE_KNOWLEDGE_TEMPLATE }))
-  const [customVideos, setCustomVideos] = useState<StoredMedia[]>([])
+  const [assistantResults, setAssistantResults] = useState<AssistantResult[]>(restoreAssistantResults)
+  const [assistantSettings, setAssistantSettings] = useState<AssistantSettings>(restoreAssistantSettings)
+  const [danceLaunch, setDanceLaunch] = useState<DanceLaunchRequest | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
 
-  useEffect(() => { listMedia('video').then(setCustomVideos) }, [])
   useEffect(() => {
     if (readLocal('old-audio-library-cleared', false)) return
     listMedia('audio').then((items) => Promise.all(items.map((item) => removeMedia(item.id)))).then(() => writeLocal('old-audio-library-cleared', true))
@@ -89,8 +107,8 @@ function App() {
   useEffect(() => writeLocal(`today-plan-${dayKey}`, todayIds), [todayIds])
   useEffect(() => writeLocal(`completed-${dayKey}`, completed), [completed])
   useEffect(() => writeLocal('music-tracks', tracks), [tracks])
-  useEffect(() => writeLocal('analysis-reports', reports), [reports])
-  useEffect(() => writeLocal('analysis-settings', analysisSettings), [analysisSettings])
+  useEffect(() => writeLocal('assistant-results', assistantResults), [assistantResults])
+  useEffect(() => writeLocal('assistant-settings', assistantSettings), [assistantSettings])
 
   const notify = (message: string) => {
     const next = { id: Date.now(), message }
@@ -113,7 +131,7 @@ function App() {
   const tabs = [
     { id: 'today' as const, label: '今日', icon: Home },
     { id: 'training' as const, label: '训练', icon: Dumbbell },
-    { id: 'analysis' as const, label: 'AI分析', icon: WandSparkles },
+    { id: 'analysis' as const, label: '训练Agent', icon: WandSparkles },
     { id: 'music' as const, label: '随机舞蹈', icon: Music2 },
   ]
 
@@ -144,7 +162,7 @@ function App() {
             onRegenerate={regeneratePlan}
             onNavigate={setTab}
             trackCount={tracks.length}
-            reportCount={reports.length}
+            assistantCount={assistantResults.length}
           />
         )}
         {tab === 'training' && (
@@ -152,16 +170,27 @@ function App() {
         )}
         {tab === 'analysis' && (
           <AnalysisPage
-            videos={customVideos}
-            reports={reports}
-            settings={analysisSettings}
-            onSettingsChange={setAnalysisSettings}
-            onUpload={async (file) => { try { const media = await saveMedia(file); setCustomVideos((items) => [media, ...items]); notify('视频已保存到当前设备') } catch { notify('视频保存失败，请检查浏览器存储空间') } }}
-            onRemoveVideo={async (id) => { await removeMedia(id); setCustomVideos((items) => items.filter((item) => item.id !== id)); notify('视频已删除') }}
-            onReport={(report) => { setReports((items) => [report, ...items.filter((item) => item.videoName !== report.videoName)]); notify('演示分析已完成') }}
+            settings={assistantSettings}
+            exercises={exercises}
+            completedIds={completed}
+            tracks={tracks}
+            todayIds={todayIds}
+            results={assistantResults}
+            onSettingsChange={setAssistantSettings}
+            onResult={(next) => setAssistantResults((items) => [next, ...items.filter((item) => item.kind !== next.kind)])}
+            onTodayPlanChange={setTodayIds}
+            onCompletePlan={(ids) => {
+              setCompleted((items) => Array.from(new Set([...items, ...ids])))
+              notify('训练计划已完成并记录')
+            }}
+            onLaunchDance={(trackIds) => {
+              setDanceLaunch({ id: crypto.randomUUID(), trackIds })
+              setTab('music')
+            }}
+            notify={notify}
           />
         )}
-        {tab === 'music' && <MusicPage tracks={tracks} setTracks={setTracks} notify={notify}/>} 
+        {tab === 'music' && <MusicPage tracks={tracks} setTracks={setTracks} launchRequest={danceLaunch} onLaunchConsumed={() => setDanceLaunch(null)} notify={notify}/>}
       </main>
 
       <nav className="mobile-nav" aria-label="主导航">
@@ -180,8 +209,8 @@ function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; 
   return <header className="page-header"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div>{action}</header>
 }
 
-function TodayPage({ exercises, completed, minutes, onComplete, onRegenerate, onNavigate, trackCount, reportCount }: {
-  exercises: Exercise[]; completed: string[]; minutes: number; onComplete: (id: string) => void; onRegenerate: () => void; onNavigate: (tab: TabId) => void; trackCount: number; reportCount: number
+function TodayPage({ exercises, completed, minutes, onComplete, onRegenerate, onNavigate, trackCount, assistantCount }: {
+  exercises: Exercise[]; completed: string[]; minutes: number; onComplete: (id: string) => void; onRegenerate: () => void; onNavigate: (tab: TabId) => void; trackCount: number; assistantCount: number
 }) {
   const percent = exercises.length ? Math.round(completed.filter((id) => exercises.some((item) => item.id === id)).length / exercises.length * 100) : 0
   const doneCount = completed.filter((id) => exercises.some((item) => item.id === id)).length
@@ -215,7 +244,7 @@ function TodayPage({ exercises, completed, minutes, onComplete, onRegenerate, on
       <div className="overview-grid">
         <div className="overview-item blush"><div className="progress-ring" style={{ '--value': `${percent * 3.6}deg` } as React.CSSProperties}><span><Dumbbell/><strong>{percent}%</strong></span></div><small>训练完成</small><em>{doneCount}/{exercises.length} 项</em></div>
         <div className="overview-item mauve"><div className="progress-ring" style={{ '--value': `${Math.min(360, minutes / 15 * 360)}deg` } as React.CSSProperties}><span><Clock3/><strong>{minutes}</strong></span></div><small>今日分钟</small><em>目标 15 分钟</em></div>
-        <div className="overview-item rose"><div className="progress-ring" style={{ '--value': `${Math.min(360, trackCount / 20 * 360)}deg` } as React.CSSProperties}><span><Music2/><strong>{trackCount}</strong></span></div><small>随机曲库</small><em>{reportCount} 份分析</em></div>
+        <div className="overview-item rose"><div className="progress-ring" style={{ '--value': `${Math.min(360, trackCount / 20 * 360)}deg` } as React.CSSProperties}><span><Music2/><strong>{trackCount}</strong></span></div><small>随机曲库</small><em>{assistantCount} 份训练报告</em></div>
       </div>
     </section>
 
@@ -226,7 +255,7 @@ function TodayPage({ exercises, completed, minutes, onComplete, onRegenerate, on
 
     <section className="support-block"><div className="support-heading"><div><span>♡</span><h2>今日支持任务</h2></div><button className="text-btn" onClick={() => onNavigate('training')}>查看全部</button></div>
       <div className="support-grid">
-        <button className="support-card" onClick={() => onNavigate('analysis')}><span className="support-icon"><WandSparkles/></span><strong>AI 拆舞</strong><small>{reportCount ? `${reportCount} 份报告已保存` : '分析一段参考视频'}</small><i><ChevronDown/></i></button>
+        <button className="support-card" onClick={() => onNavigate('analysis')}><span className="support-icon"><WandSparkles/></span><strong>AI 训练 Agent</strong><small>{assistantCount ? `${assistantCount} 份报告已保存` : '根据曲库和记忆安排训练'}</small><i><ChevronDown/></i></button>
         <button className="support-card" onClick={() => onNavigate('music')}><span className="support-icon"><Shuffle/></span><strong>随机开跳</strong><small>从 {trackCount} 首歌中抽查</small><i><ChevronDown/></i></button>
       </div>
     </section>
@@ -317,64 +346,53 @@ function AddExerciseModal({ onClose, onAdd }: { onClose: () => void; onAdd: (ite
   return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="form-modal" onSubmit={submit}><button className="modal-close" type="button" onClick={onClose}><X/></button><span className="eyebrow">Custom set</span><h2>添加训练动作</h2><label>动作名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：副歌手部细节" autoFocus/></label><label>训练时长<div className="stepper"><button type="button" onClick={() => setMinutes(Math.max(1, minutes - 1))}>−</button><strong>{minutes} 分钟</strong><button type="button" onClick={() => setMinutes(Math.min(3, minutes + 1))}>+</button></div></label><button className="primary-btn full" type="submit"><Plus/>加入今日计划</button></form></div>
 }
 
-type VideoSelection = { name: string; kind: 'jazz' | 'kpop' | 'custom'; src: string; storedId?: string }
-
-function AnalysisPage({ videos, reports, settings, onSettingsChange, onUpload, onRemoveVideo, onReport }: {
-  videos: StoredMedia[]; reports: AnalysisReport[]; settings: AnalysisSettings; onSettingsChange: (settings: AnalysisSettings) => void; onUpload: (file: File) => Promise<void>; onRemoveVideo: (id: string) => Promise<void>; onReport: (report: AnalysisReport) => void
+function AnalysisPage({ settings, exercises, completedIds, tracks, todayIds, results, onSettingsChange, onResult, onTodayPlanChange, onCompletePlan, onLaunchDance, notify }: {
+  settings: AssistantSettings; exercises: Exercise[]; completedIds: string[]; tracks: MusicTrack[]; todayIds: string[]; results: AssistantResult[]; onSettingsChange: (settings: AssistantSettings) => void; onResult: (result: AssistantResult) => void; onTodayPlanChange: (ids: string[]) => void; onCompletePlan: (ids: string[]) => void; onLaunchDance: (trackIds: string[]) => void; notify: (message: string) => void
 }) {
-  const [selection, setSelection] = useState<VideoSelection | null>(null)
-  const [stage, setStage] = useState<'idle' | 'loading' | 'done'>('idle')
-  const [currentReport, setCurrentReport] = useState<AnalysisReport | null>(reports[0] ?? null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  const chooseStored = async (media: StoredMedia) => {
-    const fresh = await getMedia(media.id)
-    if (!fresh) return
-    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
-    const url = URL.createObjectURL(fresh.blob)
-    setPreviewUrl(url); setSelection({ name: media.name, kind: 'custom', src: url, storedId: media.id }); setStage('idle'); setCurrentReport(null)
+  const [activePlan, setActivePlan] = useState<AssistantResult | null>(null)
+  const latestReport = results.find((item) => item.kind === 'training') ?? null
+  const startPlan = (result: AssistantResult) => {
+    if (result.plan?.mode === 'dance') {
+      const trackIds = (result.plan.trackIds?.length ? result.plan.trackIds : result.plan.trackId ? [result.plan.trackId] : []).filter((id) => tracks.some((track) => track.id === id))
+      if (!trackIds.length) { notify('这份随舞计划没有可播放的歌曲，请重新生成'); return }
+      onLaunchDance(trackIds)
+      notify(`已进入随舞模式，将按计划播放 ${trackIds.length} 首歌曲`)
+      return
+    }
+    setActivePlan(result)
   }
-  const chooseBuiltIn = (kind: 'jazz' | 'kpop') => { if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl); const src = `${ASSET}/${kind}.mp4`; setPreviewUrl(src); setSelection({ name: `${kind.toUpperCase()} 测试视频`, kind, src }); setStage('idle'); setCurrentReport(null) }
-  const upload = async (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; if (!file.type.startsWith('video/')) { event.target.value = ''; return } await onUpload(file); const url = URL.createObjectURL(file); setPreviewUrl(url); setSelection({ name: file.name, kind: 'custom', src: url }); event.target.value = '' }
-  const analyze = async () => { if (!selection) return; setStage('loading'); const report = await analyzeDanceVideo({ kind: selection.kind, videoName: selection.name, settings }); setCurrentReport(report); onReport(report); setStage('done') }
 
-  return <div className="page">
-    <PageHeader eyebrow="Music + dance analysis" title="AI 拆舞室" description="先听懂音乐，再看懂舞蹈：拆出曲风、动作语言，以及两者如何卡在一起。" action={<button className="secondary-btn compact" onClick={() => setShowSettings(true)}><Sparkles size={15}/>分析设置</button>}/>
-    <div className="demo-notice"><Sparkles size={18}/><p><strong>演示分析</strong> 当前结果由结构化模板生成，不代表真实模型判断。上传的视频只保存在此设备。</p></div>
-    <section className="analysis-method" aria-label="分析依据"><div className="method-heading"><span className="eyebrow">Analysis order</span><strong>音乐和舞蹈是主结果</strong></div><div className="method-steps"><span><Music2/><b>听音乐</b><small>曲风 / BPM / 重拍</small></span><span><Dumbbell/><b>看舞蹈</b><small>动作语言 / 发力</small></span><span><Sparkles/><b>找对应</b><small>切点 / 留白 / 放大</small></span><span><WandSparkles/><b>给建议</b><small>造型 / 镜头 / 练习</small></span></div></section>
-    <section className="analysis-studio">
-      <div className="video-stage">
-        {selection && previewUrl ? <video key={previewUrl} src={previewUrl} controls playsInline/> : <div className="video-empty"><FileVideo/><strong>选择一段参考视频</strong><span>试看素材或上传你自己的视频</span></div>}
-      </div>
-      <div className="video-picker">
-        <button onClick={() => chooseBuiltIn('jazz')} className={selection?.kind === 'jazz' ? 'selected' : ''}><span className="video-thumb jazz">JAZZ</span><span><strong>Jazz 测试视频</strong><small>甜酷编舞参考</small></span></button>
-        <button onClick={() => chooseBuiltIn('kpop')} className={selection?.kind === 'kpop' ? 'selected' : ''}><span className="video-thumb kpop">K-POP</span><span><strong>K-pop 测试视频</strong><small>女团编舞参考</small></span></button>
-        {videos.map((video) => <button key={video.id} onClick={() => chooseStored(video)} className={selection?.storedId === video.id ? 'selected' : ''}><span className="video-thumb custom"><FileVideo/></span><span><strong>{video.name}</strong><small>{(video.size / 1024 / 1024).toFixed(1)} MB · 本机视频</small></span><span className="remove-mini" role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onRemoveVideo(video.id) }}><Trash2 size={15}/></span></button>)}
-      </div>
-      <input ref={inputRef} className="visually-hidden" type="file" accept="video/mp4,video/quicktime,video/webm" onChange={upload}/>
-      <div className="analysis-actions"><button className="secondary-btn" onClick={() => inputRef.current?.click()}><Upload/>上传视频</button><button className="primary-btn" disabled={!selection || stage === 'loading'} onClick={analyze}>{stage === 'loading' ? <LoaderCircle className="spin"/> : <WandSparkles/>}{stage === 'loading' ? '正在拆解…' : '开始演示分析'}</button></div>
-    </section>
-    {currentReport && <ReportView report={currentReport}/>} 
-    {showSettings && <AnalysisSettingsModal settings={settings} onClose={() => setShowSettings(false)} onSave={(next) => { onSettingsChange(next); setShowSettings(false) }}/>} 
+  return <div className="page ai-page">
+    <PageHeader eyebrow="Personal training agent" title="AI 训练计划 Agent" description="可以聊练舞、查询当前工作台，也能根据曲库、记忆和知识库安排训练。" action={<button className="secondary-btn compact" onClick={() => setShowSettings(true)}><Sparkles size={15}/>Agent 设置</button>}/>
+    <div className="assistant-scope-note"><Dumbbell/><span><strong>工作台事实先查询，无法确认就明确说不知道</strong> 训练安排会读取当前进度，再检索动作和本地曲目，生成可以直接执行的计划与报告。</span></div>
+    <AgentWorkspace exercises={exercises} tracks={tracks} completedIds={completedIds} todayIds={todayIds} settings={settings} onSetTodayPlan={onTodayPlanChange} onResult={onResult} latestResult={latestReport} onStartPlan={startPlan} notify={notify}/>
+    {latestReport && <section className="agent-report-panel" aria-label="最新训练报告"><AssistantResultView result={latestReport} action={latestReport.plan && (latestReport.plan.mode === 'dance' ? latestReport.plan.trackIds?.length : latestReport.plan.exerciseIds.length) ? <button className="secondary-btn compact" onClick={() => startPlan(latestReport)}><Play size={15}/>{latestReport.plan.mode === 'dance' ? '进入随舞' : '开始训练'}</button> : undefined}/></section>}
+    {showSettings && (
+      <AssistantSettingsModal settings={settings} onClose={() => setShowSettings(false)} onSave={(next) => { onSettingsChange(next); setShowSettings(false) }}/>
+    )}
+    {activePlan && <TrainingSession key={activePlan.id} result={activePlan} exercises={exercises} tracks={tracks} onClose={() => setActivePlan(null)} onComplete={onCompletePlan} notify={notify}/>}
   </div>
 }
 
-function AnalysisSettingsModal({ settings, onClose, onSave }: { settings: AnalysisSettings; onClose: () => void; onSave: (settings: AnalysisSettings) => void }) {
+function AssistantSettingsModal({ settings, onClose, onSave }: { settings: AssistantSettings; onClose: () => void; onSave: (settings: AssistantSettings) => void }) {
   const [draft, setDraft] = useState(settings)
-  const updateKnowledge = (key: keyof AnalysisSettings['knowledge'], value: string) => setDraft((current) => ({ ...current, knowledge: { ...current.knowledge, [key]: value } }))
-  return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="form-modal settings-modal" onSubmit={(event) => { event.preventDefault(); onSave(draft) }}><button className="modal-close" type="button" onClick={onClose}><X/></button><span className="eyebrow">Prompt + knowledge</span><h2>分析设置</h2><p className="form-note">这里的内容会随未来真实模型请求一起发送。当前仍是本地演示分析，不会假装已经调用模型。</p><label>主提示词<textarea rows={7} value={draft.systemPrompt} onChange={(event) => setDraft((current) => ({ ...current, systemPrompt: event.target.value }))}/></label><div className="settings-grid">{(Object.keys(draft.knowledge) as Array<keyof AnalysisSettings['knowledge']>).map((key) => <label key={key}>{({ bodyProfile: '身体与尺码', wardrobe: '衣橱单品', makeup: '妆发偏好', budget: '造型预算', preferences: '审美偏好', constraints: '拍摄限制' } as Record<string, string>)[key]}<textarea rows={2} value={draft.knowledge[key]} onChange={(event) => updateKnowledge(key, event.target.value)}/></label>)}</div><button className="primary-btn full" type="submit"><Check/>保存设置</button></form></div>
+  const updateKnowledge = (key: keyof AssistantSettings['knowledge'], value: string) => setDraft((current) => ({ ...current, knowledge: { ...current.knowledge, [key]: value } }))
+  const fields: Array<{ key: keyof AssistantSettings['knowledge']; label: string }> = [
+    { key: 'bodyProfile', label: '身体状态与旧伤' },
+    { key: 'preferences', label: '训练偏好与目标' },
+    { key: 'constraints', label: '场地、设备与时间限制' },
+  ]
+  return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="form-modal settings-modal" onSubmit={(event) => { event.preventDefault(); onSave(draft) }}><button className="modal-close" type="button" onClick={onClose}><X/></button><span className="eyebrow">Agent preferences</span><h2>训练 Agent 设置</h2><p className="form-note">这些上下文会影响选曲、动作顺序和训练报告；本地音频不会上传。</p><label>训练规划提示词<textarea rows={7} value={draft.systemPrompt} onChange={(event) => setDraft((current) => ({ ...current, systemPrompt: event.target.value }))}/></label><div className="settings-grid">{fields.map(({ key, label }) => <label key={key}>{label}<textarea rows={2} value={draft.knowledge[key]} onChange={(event) => updateKnowledge(key, event.target.value)}/></label>)}</div><button className="primary-btn full" type="submit"><Check/>保存设置</button></form></div>
 }
 
-function ReportView({ report }: { report: AnalysisReport }) {
-  const [open, setOpen] = useState(report.sections[0]?.id)
-  return <section className="report-section"><div className="report-heading"><div><span className="eyebrow">Analysis report</span><h2>{report.videoName}</h2></div><div className="report-tags"><span>{report.bpm}</span><span>{report.style}</span></div></div><div className="report-list">{report.sections.map((section, index) => <article key={section.id} className={open === section.id ? 'open' : ''}><button onClick={() => setOpen(open === section.id ? '' : section.id)}><span className="report-number">{String(index + 1).padStart(2, '0')}</span><span><strong>{section.title}</strong><small>{section.summary}</small></span><ChevronDown/></button>{open === section.id && <ul>{section.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>}</article>)}</div></section>
+function AssistantResultView({ result, action }: { result: AssistantResult; action?: React.ReactNode }) {
+  return <div className="assistant-result"><header><div><span className="eyebrow">Training report</span><h2>{result.title}</h2><p>{result.summary}</p></div><div className="assistant-result-actions"><span className={`ai-source ${result.source}`}>{result.source === 'live' ? '真实 AI' : '本地生成'}</span>{action}</div></header><div className="assistant-result-list">{result.blocks.map((block, index) => <article key={`${block.title}-${index}`}><span>{String(index + 1).padStart(2, '0')}</span><div><h3>{block.title}</h3><small>{block.detail}</small><ul>{block.items.map((item) => <li key={item}>{item}</li>)}</ul></div></article>)}</div></div>
 }
 
-function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTracks: React.Dispatch<React.SetStateAction<MusicTrack[]>>; notify: (message: string) => void }) {
+function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify }: { tracks: MusicTrack[]; setTracks: React.Dispatch<React.SetStateAction<MusicTrack[]>>; launchRequest: DanceLaunchRequest | null; onLaunchConsumed: () => void; notify: (message: string) => void }) {
   const [showAdd, setShowAdd] = useState(false)
-  const [playerMode, setPlayerMode] = useState<PlayerMode>(() => readLocal('music-player-mode', 'dance'))
+  const [playerMode, setPlayerMode] = useState<PlayerMode>(() => launchRequest ? 'dance' : readLocal('music-player-mode', 'dance'))
   const [listenMode, setListenMode] = useState<ListenMode>(() => readLocal('music-listen-mode', 'shuffle'))
   const [current, setCurrent] = useState<MusicTrack | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -387,6 +405,11 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
   const audioRef = useRef<HTMLAudioElement>(null)
   const autoplayRef = useRef<MusicTrack | null>(null)
   const currentRef = useRef<MusicTrack | null>(null)
+  const countdownTargetRef = useRef<MusicTrack | null>(null)
+  const plannedDanceQueueRef = useRef<MusicTrack[]>([])
+  const plannedDanceActiveRef = useRef(false)
+  const [plannedCountdownTrack, setPlannedCountdownTrack] = useState<MusicTrack | null>(null)
+  const [plannedDanceProgress, setPlannedDanceProgress] = useState<{ index: number; total: number } | null>(null)
   const countdownIntervalRef = useRef<number | null>(null)
   const countdownTimeoutRef = useRef<number | null>(null)
   const [filter, setFilter] = useState<'all' | 'review'>('all')
@@ -428,9 +451,20 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
     autoplayRef.current = next
     await loadTrack(next)
   }
-  const startCountdown = () => {
+  const cancelPlannedDance = () => {
+    plannedDanceActiveRef.current = false
+    plannedDanceQueueRef.current = []
+    setPlannedDanceProgress(null)
+  }
+  const beginRandomDance = () => {
+    cancelPlannedDance()
+    startCountdown()
+  }
+  const startCountdown = (plannedTrack?: MusicTrack) => {
     if (!tracks.length) { notify('先添加一首歌曲，再开始随机舞蹈'); return }
     clearCountdownTimers()
+    countdownTargetRef.current = plannedTrack ?? null
+    setPlannedCountdownTrack(plannedTrack ?? null)
     autoplayRef.current = null
     audioRef.current?.pause()
     setPlaying(false)
@@ -448,9 +482,17 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
       setCountdown((value) => Math.max(1, value - 1))
     }, 1000)
     countdownTimeoutRef.current = window.setTimeout(() => {
+      const target = countdownTargetRef.current
+      countdownTargetRef.current = null
+      setPlannedCountdownTrack(null)
       clearCountdownTimers()
       stopCountdownAudio()
-      void pickAndPlay()
+      if (target) {
+        autoplayRef.current = target
+        void loadTrack(target)
+      } else {
+        void pickAndPlay()
+      }
     }, 5000)
   }
   const playPendingTrack = async (startAt?: number) => {
@@ -476,7 +518,7 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
       return
     }
     if (phase === 'countdown') {
-      clearCountdownTimers(); stopCountdownAudio()
+      clearCountdownTimers(); stopCountdownAudio(); countdownTargetRef.current = null; setPlannedCountdownTrack(null); cancelPlannedDance()
       if (audioRef.current && audioUrl) { audioRef.current.src = audioUrl; audioRef.current.load() }
       setSessionActive(false); setPhase(current ? 'paused' : 'idle'); return
     }
@@ -488,12 +530,43 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
       catch { notify('浏览器阻止了播放，请再点一次播放键') }
       return
     }
-    startCountdown()
+    beginRandomDance()
   }
   const selectTrack = async (track: MusicTrack) => {
-    clearCountdownTimers(); stopCountdownAudio(); audioRef.current?.pause()
+    cancelPlannedDance(); clearCountdownTimers(); stopCountdownAudio(); audioRef.current?.pause()
     setSessionActive(false); setPhase('idle'); autoplayRef.current = null
     await loadTrack(track, playerMode === 'listen', 0)
+  }
+  const continueDanceSession = () => {
+    if (!plannedDanceActiveRef.current) {
+      startCountdown()
+      return
+    }
+    const next = plannedDanceQueueRef.current.shift()
+    if (next) {
+      setPlannedDanceProgress((progress) => progress ? { ...progress, index: progress.index + 1 } : progress)
+      startCountdown(next)
+      return
+    }
+    plannedDanceActiveRef.current = false
+    setPlannedDanceProgress(null)
+    setSessionActive(false)
+    setPhase('paused')
+    notify('随舞计划已完成')
+  }
+  const skipDanceTrack = () => {
+    clearCountdownTimers()
+    stopCountdownAudio()
+    autoplayRef.current = null
+    countdownTargetRef.current = null
+    setPlannedCountdownTrack(null)
+    audioRef.current?.pause()
+    setPlaying(false)
+    if (plannedDanceActiveRef.current) {
+      continueDanceSession()
+      return
+    }
+    startCountdown()
   }
   const handleTimeUpdate = () => {
     const audio = audioRef.current
@@ -506,7 +579,7 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
     const { start, end } = chorusWindow(current)
     if (audio.currentTime < end) return
     audio.pause(); audio.currentTime = start; setPlaying(false)
-    if (sessionActive) startCountdown()
+    if (sessionActive) continueDanceSession()
     else setPhase('paused')
   }
   const nextListenTrack = async (forceAdvance = false) => {
@@ -530,14 +603,14 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
     await loadTrack(previous, true, 0)
   }
   const switchPlayerMode = (next: PlayerMode) => {
-    clearCountdownTimers(); stopCountdownAudio(); autoplayRef.current = null
+    cancelPlannedDance(); clearCountdownTimers(); stopCountdownAudio(); autoplayRef.current = null; countdownTargetRef.current = null; setPlannedCountdownTrack(null)
     if (audioRef.current && audioUrl) { audioRef.current.src = audioUrl; audioRef.current.load() }
     setPlaying(false); setSessionActive(false); setPhase(current ? 'paused' : 'idle'); setPlayerMode(next)
   }
   const handleEnded = () => {
     setPlaying(false)
     if (playerMode === 'listen') { void nextListenTrack(); return }
-    if (sessionActive) startCountdown()
+    if (sessionActive) continueDanceSession()
   }
   const handleMetadata = () => {
     const audio = audioRef.current
@@ -552,6 +625,22 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
     setPlaybackPosition(value)
     audio.play().then(() => { setPlaying(true); setSessionActive(true); setPhase('playing') }).catch(() => undefined)
   }
+  const startPlannedDance = useEffectEvent((request: DanceLaunchRequest) => {
+    const plannedTracks = request.trackIds.map((id) => tracks.find((track) => track.id === id)).filter(Boolean) as MusicTrack[]
+    onLaunchConsumed()
+    if (!plannedTracks.length) { notify('随舞计划中的歌曲已不存在，请重新生成计划'); return }
+    plannedDanceActiveRef.current = true
+    plannedDanceQueueRef.current = plannedTracks.slice(1)
+    setPlannedDanceProgress({ index: 1, total: plannedTracks.length })
+    startCountdown(plannedTracks[0])
+  })
+  useEffect(() => {
+    if (!launchRequest?.id) return
+    const timer = window.setTimeout(() => {
+      startPlannedDance(launchRequest)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [launchRequest])
   useEffect(() => () => { clearCountdownTimers(); stopCountdownAudio() }, [])
   const mark = (status: MusicTrack['status']) => { if (!current) return; setTracks((items) => items.map((item) => item.id === current.id ? { ...item, status } : item)); setCurrent({ ...current, status }); notify(status === 'remembered' ? '记住啦，继续保持' : '已加入复习清单') }
   const updateClip = (updated: MusicTrack) => {
@@ -570,7 +659,7 @@ function MusicPage({ tracks, setTracks, notify }: { tracks: MusicTrack[]; setTra
     <div className="music-mode-toolbar"><div className="mode-switch" role="tablist" aria-label="播放模式"><button className={playerMode === 'dance' ? 'active' : ''} onClick={() => switchPlayerMode('dance')}><Dumbbell/>随舞模式</button><button className={playerMode === 'listen' ? 'active' : ''} onClick={() => switchPlayerMode('listen')}><Music2/>听歌模式</button></div>{playerMode === 'listen' && <div className="listen-modes" role="group" aria-label="听歌播放顺序"><button className={listenMode === 'shuffle' ? 'active' : ''} onClick={() => setListenMode('shuffle')} title="随机播放"><Shuffle/>随机</button><button className={listenMode === 'sequential' ? 'active' : ''} onClick={() => setListenMode('sequential')} title="顺序播放"><ListMusic/>顺序</button><button className={listenMode === 'single' ? 'active' : ''} onClick={() => setListenMode('single')} title="单曲循环"><Repeat1/>单曲循环</button></div>}</div>
     <section className={`player-deck ${phase === 'countdown' || playing ? 'is-active' : ''}`}>
       <div className="vinyl-wrap"><div className={`stage-orbit ${playing ? 'music-active' : ''}`}>{phase === 'countdown' ? <><span className="countdown-number" key={countdown} aria-live="assertive">{countdown}</span><small>GET READY</small></> : <div className={`vinyl ${playing ? 'playing' : ''}`}><div className="vinyl-label"><Music2/></div></div>}<i/><i/><i/><i/><i/></div>{phase !== 'countdown' && <span className="tone-arm"/>}</div>
-      <div className="now-playing"><span className="eyebrow">{phase === 'countdown' ? 'Next dance' : playerMode === 'listen' ? 'Now listening' : 'Now dancing'}</span><h2>{phase === 'countdown' ? '准备，下一首马上开始' : current?.title ?? (playerMode === 'listen' ? '选择一种方式开始听歌' : '开启连续随机舞蹈')}</h2><p>{phase === 'countdown' ? '倒计时结束后自动抽取并播放' : current ? playerMode === 'listen' ? `${current.artist} · 完整播放` : `${current.artist} · 随舞片段 ${formatSeconds(chorusWindow(current).start)}–${formatSeconds(chorusWindow(current).end)}` : playerMode === 'listen' ? '完整播放曲库中的每一首歌' : '每首片段结束后，倒数 5 秒自动进入下一首'}</p>{playerMode === 'listen' && current && phase !== 'countdown' && <div className="listen-progress"><span>{formatSeconds(playbackPosition)}</span><input aria-label="调整当前歌曲播放位置" type="range" min="0" max={Math.max(trackDuration, 1)} step="0.1" value={Math.min(playbackPosition, Math.max(trackDuration, 1))} onChange={(event) => seekListening(Number(event.target.value))}/><span>{formatSeconds(trackDuration)}</span></div>}<div className="player-controls">{playerMode === 'listen' ? <button className="icon-btn" onClick={() => void previousListenTrack()} title="上一首"><SkipBack/></button> : <button className="icon-btn" onClick={startCountdown} title="开始连续随机舞蹈"><Shuffle/></button>}<button className="play-main" onClick={() => void toggleSession()} title={playing || phase === 'countdown' ? '暂停' : '开始或继续'}>{phase === 'countdown' || playing ? <Pause/> : <Play/>}</button>{playerMode === 'listen' ? <button className="icon-btn" onClick={() => void nextListenTrack(true)} title="下一首"><SkipForward/></button> : <button className="icon-btn" onClick={startCountdown} title="跳过并倒计时下一首"><RefreshCw/></button>}<span className={`session-status ${sessionActive ? 'active' : ''}`}><i/>{sessionActive ? phase === 'countdown' ? '倒计时中' : playerMode === 'listen' ? listenMode === 'shuffle' ? '随机播放中' : listenMode === 'sequential' ? '顺序播放中' : '单曲循环中' : '连续随舞中' : '已暂停'}</span></div>{current && phase !== 'countdown' && playerMode === 'dance' && <div className="memory-actions"><button onClick={() => mark('remembered')} className={current.status === 'remembered' ? 'active' : ''}><Check/>记得</button><button onClick={() => mark('review')} className={current.status === 'review' ? 'active' : ''}><RotateCcw/>要复习</button></div>}</div>
+      <div className="now-playing"><span className="eyebrow">{phase === 'countdown' ? plannedCountdownTrack ? 'Planned dance' : 'Next dance' : playerMode === 'listen' ? 'Now listening' : 'Now dancing'}</span><h2>{phase === 'countdown' ? plannedCountdownTrack ? `准备开始 ${plannedCountdownTrack.title}` : '准备，下一首马上开始' : current?.title ?? (playerMode === 'listen' ? '选择一种方式开始听歌' : '开启连续随机舞蹈')}</h2><p>{phase === 'countdown' ? plannedCountdownTrack ? '倒计时结束后自动播放计划歌曲' : '倒计时结束后自动抽取并播放' : current ? playerMode === 'listen' ? `${current.artist} · 完整播放` : `${current.artist} · 随舞片段 ${formatSeconds(chorusWindow(current).start)}–${formatSeconds(chorusWindow(current).end)}` : playerMode === 'listen' ? '完整播放曲库中的每一首歌' : '每首片段结束后，倒数 5 秒自动进入下一首'}</p>{playerMode === 'listen' && current && phase !== 'countdown' && <div className="listen-progress"><span>{formatSeconds(playbackPosition)}</span><input aria-label="调整当前歌曲播放位置" type="range" min="0" max={Math.max(trackDuration, 1)} step="0.1" value={Math.min(playbackPosition, Math.max(trackDuration, 1))} onChange={(event) => seekListening(Number(event.target.value))}/><span>{formatSeconds(trackDuration)}</span></div>}<div className="player-controls">{playerMode === 'listen' ? <button className="icon-btn" onClick={() => void previousListenTrack()} title="上一首"><SkipBack/></button> : <button className="icon-btn" onClick={beginRandomDance} title="退出当前计划并开始随机随舞"><Shuffle/></button>}<button className="play-main" onClick={() => void toggleSession()} title={playing || phase === 'countdown' ? '暂停' : '开始或继续'}>{phase === 'countdown' || playing ? <Pause/> : <Play/>}</button>{playerMode === 'listen' ? <button className="icon-btn" onClick={() => void nextListenTrack(true)} title="下一首"><SkipForward/></button> : <button className="icon-btn" onClick={skipDanceTrack} title={plannedDanceProgress ? '跳到计划下一首' : '跳过并倒计时下一首'}><RefreshCw/></button>}<span className={`session-status ${sessionActive ? 'active' : ''}`}><i/>{plannedDanceProgress ? `计划 ${plannedDanceProgress.index}/${plannedDanceProgress.total}` : sessionActive ? phase === 'countdown' ? '倒计时中' : playerMode === 'listen' ? listenMode === 'shuffle' ? '随机播放中' : listenMode === 'sequential' ? '顺序播放中' : '单曲循环中' : '连续随舞中' : '已暂停'}</span></div>{current && phase !== 'countdown' && playerMode === 'dance' && <div className="memory-actions"><button onClick={() => mark('remembered')} className={current.status === 'remembered' ? 'active' : ''}><Check/>记得</button><button onClick={() => mark('review')} className={current.status === 'review' ? 'active' : ''}><RotateCcw/>要复习</button></div>}</div>
       <audio ref={audioRef} src={audioUrl ?? undefined} preload="auto" loop={playerMode === 'listen' && listenMode === 'single'} onCanPlay={() => void playPendingTrack()} onLoadedMetadata={handleMetadata} onTimeUpdate={handleTimeUpdate} onEnded={handleEnded} onPause={() => setPlaying(false)} onPlay={() => setPlaying(true)}/>
     </section>
     <div className="library-toolbar"><div><h2>我的曲库</h2><span>{tracks.length} 首 · {tracks.filter((item) => item.status === 'review').length} 首待复习</span></div><div className="segmented"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button><button className={filter === 'review' ? 'active' : ''} onClick={() => setFilter('review')}>待复习</button></div></div>
@@ -615,7 +704,7 @@ function TrackClipEditor({ track, onSave }: { track: MusicTrack; onSave: (track:
     <div className="clip-heading"><div><span className="eyebrow">Random clip</span><strong>选择每次随机播放的片段</strong></div><span>{formatSeconds(start)}–{formatSeconds(end)} · {Math.round(end - start)} 秒</span></div>
     <audio ref={previewRef} src={previewUrl || undefined} controls preload="metadata" onLoadedMetadata={(event) => { const value = event.currentTarget.duration; if (Number.isFinite(value)) { setDuration(value); setEnd((current) => Math.min(current, value)) } }} onTimeUpdate={(event) => { if (event.currentTarget.currentTime >= end) event.currentTarget.pause() }}/>
     <div className="clip-range"><label><span>片段开始 <b>{formatSeconds(start)}</b></span><input type="range" min={0} max={Math.max(8, duration - 8)} step={1} value={Math.min(start, Math.max(8, duration - 8))} onChange={(event) => updateStart(Number(event.target.value))}/></label><label><span>片段结束 <b>{formatSeconds(end)}</b></span><input type="range" min={8} max={duration} step={1} value={Math.min(end, duration)} onChange={(event) => updateEnd(Number(event.target.value))}/></label></div>
-    <div className="clip-actions"><button className="secondary-btn compact" type="button" onClick={previewClip}><Play/>试听片段</button><button className="primary-btn compact" type="button" onClick={() => onSave({ ...track, chorusStart: Math.round(start), chorusEnd: Math.round(end) })}><Save/>保存片段</button></div>
+    <div className="clip-actions"><button className="secondary-btn compact" type="button" onClick={previewClip}><Play/>试听片段</button><button className="primary-btn compact" type="button" onClick={() => onSave({ ...track, durationSeconds: Math.round(duration), chorusStart: Math.round(start), chorusEnd: Math.round(end) })}><Save/>保存片段</button></div>
   </div>
 }
 
@@ -631,11 +720,29 @@ function AddTrackModal({ onClose, onAdd }: { onClose: () => void; onAdd: (track:
     if (!title.trim() || !artist.trim() || !file) { setError('请填写歌名、艺人，并选择一份本地音频。'); return }
     if (!['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav'].includes(file.type)) { setError('暂时只支持 MP3、M4A 和 WAV 音频。'); return }
     try {
+      const durationSeconds = await readAudioDuration(file)
       const blobKey = (await saveMedia(file)).id
-      onAdd({ id: crypto.randomUUID(), title: title.trim(), artist: artist.trim(), tag, source: 'local', blobKey, status: 'new' })
+      onAdd({ id: crypto.randomUUID(), title: title.trim(), artist: artist.trim(), tag, source: 'local', blobKey, durationSeconds, status: 'new' })
     } catch { setError('音频保存失败，请检查浏览器存储空间后重试。') }
   }
   return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="form-modal track-form" onSubmit={submit}><button className="modal-close" type="button" onClick={onClose}><X/></button><span className="eyebrow">Add track</span><h2>添加到随机舞蹈库</h2><div className="form-grid"><label>歌曲名<input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如：Supernova"/></label><label>艺人<input required value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="例如：aespa"/></label></div><label>舞蹈标签<select value={tag} onChange={(e) => setTag(e.target.value)}><option>K-pop</option><option>女团舞</option><option>男团舞</option><option>Jazz</option><option>Choreography</option></select></label><label>本地音频（MP3 / M4A / WAV）<span className="file-field"><Upload/>{file ? file.name : '选择可正常播放的音频'}<input required type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav" onChange={(e) => setFile(e.target.files?.[0] ?? null)}/></span></label><p className="form-note">音频仅保存在当前设备，用于训练和随机舞蹈直接播放。</p>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-btn full" type="submit"><Plus/>加入曲库</button></form></div>
+}
+
+function readAudioDuration(file: File) {
+  return new Promise<number>((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const audio = new Audio()
+    const finish = (duration?: number) => {
+      URL.revokeObjectURL(url)
+      audio.removeAttribute('src')
+      if (duration && Number.isFinite(duration)) resolve(Math.round(duration))
+      else reject(new Error('Unable to read audio duration'))
+    }
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => finish(audio.duration)
+    audio.onerror = () => finish()
+    audio.src = url
+  })
 }
 
 export default App
