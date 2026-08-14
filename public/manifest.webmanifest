@@ -1,0 +1,15 @@
+{
+  "name": "蟹堡王舞蹈工作台",
+  "short_name": "舞蹈工作台",
+  "start_url": "./?source=pwa",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fff9fb",
+  "theme_color": "#a17b88",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "./assets/avatar.jpg", "sizes": "512x512", "type": "image/jpeg", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,8 @@
+.env
+.env.local
+.env.*.local
+.DS_Store
+.playwright-cli/
+dist/
+node_modules/
+work/
