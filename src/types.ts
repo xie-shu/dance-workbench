@@ -16,6 +16,7 @@ export type MusicTrack = {
   tag: string
   source: 'local'
   audioUrl?: string
+  durationSeconds?: number
   chorusStart?: number
   chorusEnd?: number
   blobKey?: string
@@ -32,19 +33,74 @@ export type StoredMedia = {
   blob: Blob
 }
 
-export type AnalysisSection = {
-  id: string
+export type AssistantBlock = {
   title: string
-  summary: string
-  bullets: string[]
+  detail: string
+  items: string[]
 }
 
-export type AnalysisReport = {
+export type AssistantResult = {
   id: string
-  videoName: string
-  videoKind: 'jazz' | 'kpop' | 'custom'
+  kind: 'training'
+  title: string
+  summary: string
+  source: 'demo' | 'live'
   createdAt: string
-  bpm: string
-  style: string
-  sections: AnalysisSection[]
+  blocks: AssistantBlock[]
+  plan?: ExecutableTrainingPlan
+}
+
+export type ExecutableTrainingPlan = {
+  mode?: 'fundamentals' | 'dance'
+  exerciseIds: string[]
+  exerciseMinutes?: Record<string, number>
+  trackId?: string
+  trackIds?: string[]
+  musicDurationSeconds?: number
+  totalMinutes: number
+}
+
+export type AgentMemory = {
+  id: string
+  category: 'preference' | 'body' | 'goal' | 'routine'
+  content: string
+  createdAt: string
+}
+
+export type KnowledgeNote = {
+  id: string
+  title: string
+  content: string
+  tags: string[]
+  createdAt: string
+}
+
+export type AgentToolRun = {
+  id: string
+  name: string
+  label: string
+  summary: string
+  status: 'done' | 'skipped'
+}
+
+export type AgentEffect =
+  | { type: 'set_today_plan'; exerciseIds: string[] }
+  | { type: 'save_memory'; memory: AgentMemory }
+  | { type: 'add_knowledge'; note: KnowledgeNote }
+  | { type: 'save_assistant_result'; result: AssistantResult }
+
+export type AgentMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+  source?: 'local' | 'live' | 'tool'
+  tools?: AgentToolRun[]
+}
+
+export type AgentRunResult = {
+  answer: string
+  source: 'local' | 'live' | 'tool'
+  tools: AgentToolRun[]
+  effects: AgentEffect[]
 }
