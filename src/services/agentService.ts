@@ -49,6 +49,35 @@ export const INITIAL_AGENT_KNOWLEDGE: KnowledgeNote[] = [
 const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 const now = () => new Date().toISOString()
 const uid = () => crypto.randomUUID()
+const danceEditPattern = /(不要|去掉|删掉|排除|移除|加上|加入|换掉|保留)/
+const danceReorderPattern = /(换(?:个|一下)?顺序|调整(?:一下)?顺序|重新(?:排|排序)|打乱(?:一下)?顺序|洗(?:个|一下)?牌|还是(?:这|那)(?:几|些)首(?:歌|歌曲)?|(?:这|那)(?:几|些)首(?:歌|歌曲)?.*(?:换|调|重新|打乱))/
+
+function parseChineseInteger(value: string) {
+  if (/^\d+$/.test(value)) return Number(value)
+  const digits: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+  let total = 0
+  let current = 0
+  for (const character of value) {
+    if (character in digits) {
+      current = digits[character]
+    } else if (character === '十') {
+      total += (current || 1) * 10
+      current = 0
+    } else if (character === '百') {
+      total += (current || 1) * 100
+      current = 0
+    } else {
+      return undefined
+    }
+  }
+  const result = total + current
+  return result > 0 ? result : undefined
+}
+
+function numberBeforeUnit(prompt: string, unit: '首' | '分钟') {
+  const match = prompt.match(new RegExp(`(\\d+|[零〇一二两三四五六七八九十百]+)\\s*${unit}`))
+  return match ? parseChineseInteger(match[1]) : undefined
+}
 
 function tool(name: string, label: string, summary: string, status: AgentToolRun['status'] = 'done'): AgentToolRun {
   return { id: uid(), name, label, summary, status }
@@ -133,16 +162,17 @@ function isDancePlanRequest(prompt: string, context: AgentContext) {
     || /\d+\s*分钟.*(随舞|随机舞蹈)/.test(prompt)
   )
   return asksForDance
-    || (context.latestResult?.plan?.mode === 'dance' && /(不要|去掉|删掉|排除|移除|加上|加入|换掉|保留|再生成|重新)/.test(prompt))
+    || (context.latestResult?.plan?.mode === 'dance' && (danceEditPattern.test(prompt) || danceReorderPattern.test(prompt) || /(再生成|重新)/.test(prompt)))
 }
 
 function createDancePlan(prompt: string, context: AgentContext): AssistantResult | null {
   const tracks = context.tracks.filter((track) => track.audioUrl || track.blobKey)
   const previousIds = context.latestResult?.plan?.mode === 'dance' ? (context.latestResult.plan.trackIds ?? []) : []
-  const modifying = previousIds.length > 0 && /(不要|去掉|删掉|排除|移除|加上|加入|换掉|保留)/.test(prompt)
-  const requestedCount = prompt.match(/(\d+)\s*首/)?.[1]
-  const requestedMinutes = prompt.match(/(\d+)\s*分钟/)?.[1]
-  const reshufflingPrevious = previousIds.length > 0 && /再生成|重新/.test(prompt) && !requestedCount && !requestedMinutes
+  const modifying = previousIds.length > 0 && danceEditPattern.test(prompt)
+  const requestedCount = numberBeforeUnit(prompt, '首')
+  const requestedMinutes = numberBeforeUnit(prompt, '分钟')
+  const reorderOnly = previousIds.length > 0 && danceReorderPattern.test(prompt)
+  const reshufflingPrevious = previousIds.length > 0 && (reorderOnly || (/(再生成|重新)/.test(prompt) && !requestedCount && !requestedMinutes))
   const named = (track: MusicTrack) => {
     const index = prompt.toLowerCase().indexOf(track.title.toLowerCase())
     if (index < 0) return { excluded: false, added: false }
@@ -155,7 +185,7 @@ function createDancePlan(prompt: string, context: AgentContext): AssistantResult
   for (const id of additions) if (!ids.includes(id)) ids.push(id)
   const resultId = uid()
   const ordered = ids.map((id) => tracks.find((track) => track.id === id)).filter((track): track is MusicTrack => Boolean(track))
-  if (!modifying || /再生成|重新/.test(prompt)) {
+  if (!modifying || reorderOnly || /(再生成|重新)/.test(prompt)) {
     const score = (value: string) => {
       let hash = 2166136261
       for (const character of `${resultId}:${value}`) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619)
@@ -179,7 +209,7 @@ function createDancePlan(prompt: string, context: AgentContext): AssistantResult
       sessionSeconds += clipSeconds(track) + 5
     }
   } else {
-    const count = Number(requestedCount ?? ordered.length)
+    const count = requestedCount ?? ordered.length
     selected.push(...ordered.slice(0, Math.max(1, Math.min(count, ordered.length))))
   }
   if (!selected.length) return null
@@ -197,7 +227,7 @@ function createDancePlan(prompt: string, context: AgentContext): AssistantResult
     blocks: [
       { title: '随舞顺序', detail: `${selected.length} 首 · 预计 ${timeLabel(sessionDurationSeconds)}（含倒计时）`, items: selected.map((track, index) => `${String(index + 1).padStart(2, '0')} ${track.title} · ${track.artist} · ${timeLabel(clipSeconds(track))}`) },
       { title: '播放规则', detail: `音乐 ${timeLabel(musicDurationSeconds)} + 倒计时 ${timeLabel(countdownSeconds)}`, items: ['进入随舞页面后自动开始第一首', '每首片段结束后按计划顺序播放下一首', '最后一首结束后停止'] },
-      { title: '计划调整', detail: '可以继续和 Agent 对话调整', items: ['说“不要某首歌”即可移除', '说“加上某首歌”即可加入', '说“再生成一份随舞计划”会重新洗牌'] },
+      { title: '计划调整', detail: '可以继续和 Agent 对话调整', items: ['说“不要某首歌”即可移除', '说“加上某首歌”即可加入', '说“还是这几首歌，换个顺序”会保留歌曲并重新排序'] },
     ],
   }
 }
@@ -342,7 +372,9 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
       if (result?.plan) {
         tools.push(tool('create_training_report', '生成随舞计划', `${result.plan.trackIds?.length ?? 0} 首歌曲 · 随机顺序`))
         effects.push({ type: 'save_assistant_result', result })
-        answers.push(`已生成 ${result.plan.trackIds?.length ?? 0} 首歌曲的随舞计划。确认后会按报告中的顺序自动播放。`)
+        answers.push(danceReorderPattern.test(prompt)
+          ? `已保留当前随舞计划中的 ${result.plan.trackIds?.length ?? 0} 首歌曲，只重新调整了播放顺序。确认后会按新顺序自动播放。`
+          : `已生成 ${result.plan.trackIds?.length ?? 0} 首歌曲的随舞计划。确认后会按报告中的顺序自动播放。`)
       } else answers.push('当前曲库没有可播放歌曲，暂时无法生成随舞计划。')
     } else {
       const plan = trainingPlan(prompt, context)

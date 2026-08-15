@@ -101,9 +101,39 @@ function makeId() {
   return crypto.randomUUID()
 }
 
+const danceEditPattern = /(不要|去掉|删掉|排除|移除|加上|加入|换掉|保留)/
+const danceReorderPattern = /(换(?:个|一下)?顺序|调整(?:一下)?顺序|重新(?:排|排序)|打乱(?:一下)?顺序|洗(?:个|一下)?牌|还是(?:这|那)(?:几|些)首(?:歌|歌曲)?|(?:这|那)(?:几|些)首(?:歌|歌曲)?.*(?:换|调|重新|打乱))/
+
+function parseChineseInteger(value) {
+  if (/^\d+$/.test(value)) return Number(value)
+  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+  let total = 0
+  let current = 0
+  for (const character of value) {
+    if (character in digits) {
+      current = digits[character]
+    } else if (character === '十') {
+      total += (current || 1) * 10
+      current = 0
+    } else if (character === '百') {
+      total += (current || 1) * 100
+      current = 0
+    } else {
+      return undefined
+    }
+  }
+  const result = total + current
+  return result > 0 ? result : undefined
+}
+
+function numberBeforeUnit(prompt, unit) {
+  const match = String(prompt).match(new RegExp(`(\\d+|[零〇一二两三四五六七八九十百]+)\\s*${unit}`))
+  return match ? parseChineseInteger(match[1]) : undefined
+}
+
 function isPlanningRequest(prompt, context = {}) {
   const text = String(prompt)
-  const danceFollowUp = context.latestResult?.plan?.mode === 'dance' && /(不要|去掉|删掉|排除|移除|加上|加入|换掉|再生成|重新)/.test(text)
+  const danceFollowUp = context.latestResult?.plan?.mode === 'dance' && (danceEditPattern.test(text) || danceReorderPattern.test(text) || /(再生成|重新)/.test(text))
   const asksForDance = /(随舞|随机舞蹈)/.test(text) && (
     /(计划|方案|安排|排序|生成|练习|训练|开始|开跳)/.test(text)
     || /(想|要|来|做|练|开始|帮我|给我).*(随舞|随机舞蹈)/.test(text)
@@ -114,7 +144,7 @@ function isPlanningRequest(prompt, context = {}) {
 
 function planModeForPrompt(prompt, context = {}) {
   const text = String(prompt)
-  if (context.latestResult?.plan?.mode === 'dance' && /(不要|去掉|删掉|排除|移除|加上|加入|换掉|保留|再生成|重新)/.test(text)) return 'dance'
+  if (context.latestResult?.plan?.mode === 'dance' && (danceEditPattern.test(text) || danceReorderPattern.test(text) || /(再生成|重新)/.test(text))) return 'dance'
   if (/(基本功|分离|isolation|热身|体能|控制训练)/i.test(text)) return 'fundamentals'
   if (/(随舞|跳舞|练舞|扒舞|副歌|整支舞|编舞|舞蹈练习)/.test(text)) return 'dance'
   return 'fundamentals'
@@ -170,10 +200,11 @@ function allocateExerciseMinutes(exercises, targetMinutes) {
 function buildDancePlan(prompt, context, seed) {
   const tracks = (context.tracks || []).filter((track) => track.audioUrl || track.blobKey)
   const previousIds = context.latestResult?.plan?.mode === 'dance' ? (context.latestResult.plan.trackIds || []) : []
-  const modifying = previousIds.length > 0 && /(不要|去掉|删掉|排除|移除|加上|加入|换掉|保留)/.test(prompt)
-  const requestedCount = prompt.match(/(\d+)\s*首/)?.[1]
-  const requestedMinutes = prompt.match(/(\d+)\s*分钟/)?.[1]
-  const reshufflingPrevious = previousIds.length > 0 && /再生成|重新/.test(prompt) && !requestedCount && !requestedMinutes
+  const modifying = previousIds.length > 0 && danceEditPattern.test(prompt)
+  const requestedCount = numberBeforeUnit(prompt, '首')
+  const requestedMinutes = numberBeforeUnit(prompt, '分钟')
+  const reorderOnly = previousIds.length > 0 && danceReorderPattern.test(prompt)
+  const reshufflingPrevious = previousIds.length > 0 && (reorderOnly || (/(再生成|重新)/.test(prompt) && !requestedCount && !requestedMinutes))
   const negativeWords = /(不要|去掉|删掉|排除|移除|不放)/
   const addWords = /(加上|加入|放入|保留|要有)/
   const named = (track) => {
@@ -192,7 +223,7 @@ function buildDancePlan(prompt, context, seed) {
     for (const character of `${seed}:${value}`) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619)
     return hash >>> 0
   }
-  if (!modifying || /再生成|重新/.test(prompt)) {
+  if (!modifying || reorderOnly || /(再生成|重新)/.test(prompt)) {
     const shuffled = ordered
       .map((track, index) => ({ track, rank: score(`${track.id}:${index}`) }))
       .sort((a, b) => a.rank - b.rank)
@@ -212,7 +243,7 @@ function buildDancePlan(prompt, context, seed) {
       sessionSeconds += clipSeconds(track) + 5
     }
   } else {
-    const count = Number(requestedCount || ordered.length)
+    const count = requestedCount || ordered.length
     selected.push(...ordered.slice(0, Math.max(1, Math.min(count, ordered.length))))
   }
   const musicDurationSeconds = selected.reduce((sum, track) => sum + clipSeconds(track), 0)
@@ -413,7 +444,7 @@ function ensureExecutablePlan(input, runs, effects) {
       blocks: [
         { title: '随舞顺序', detail: `${dance.selected.length} 首 · 预计 ${timeLabel(dance.sessionDurationSeconds)}（含倒计时）`, items: dance.selected.map((track, index) => `${String(index + 1).padStart(2, '0')} ${track.title} · ${track.artist} · ${timeLabel(Math.max(8, (track.chorusEnd ?? ((track.chorusStart ?? 45) + 32)) - (track.chorusStart ?? 45)))}`) },
         { title: '播放规则', detail: `音乐 ${timeLabel(dance.musicDurationSeconds)} + 倒计时 ${timeLabel(dance.countdownSeconds)}`, items: ['进入随舞页面后自动开始第一首', '每首片段结束后按计划顺序倒计时并播放下一首', '最后一首结束后停止，不自动追加曲目'] },
-        { title: '计划调整', detail: '可以继续和 Agent 对话调整', items: ['说“不要某首歌”即可移除', '说“加上某首歌”即可加入', '说“再生成一份随舞计划”会重新洗牌'] },
+        { title: '计划调整', detail: '可以继续和 Agent 对话调整', items: ['说“不要某首歌”即可移除', '说“加上某首歌”即可加入', '说“还是这几首歌，换个顺序”会保留歌曲并重新排序'] },
       ],
     }
     effects.push({ type: 'save_assistant_result', result: report })
@@ -510,7 +541,11 @@ function finishAgentRun(input, answer, source, runs, effects) {
   if (report.plan.mode === 'dance') {
     const trackCount = report.plan.trackIds?.length || 0
     const sessionSeconds = (report.plan.musicDurationSeconds || 0) + trackCount * 5
-    return { answer: `已生成 ${trackCount} 首歌曲的随舞计划，预计 ${timeLabel(sessionSeconds)}（已计入每首前 5 秒倒计时）。确认后会进入随舞页面，并按报告中的顺序播放。`, source, tools: runs, effects }
+    const reorderedSameTracks = input.context?.latestResult?.plan?.mode === 'dance' && danceReorderPattern.test(String(input.prompt))
+    const answer = reorderedSameTracks
+      ? `已保留当前随舞计划中的 ${trackCount} 首歌曲，只重新调整了播放顺序。预计 ${timeLabel(sessionSeconds)}（已计入每首前 5 秒倒计时），确认后会按新顺序播放。`
+      : `已生成 ${trackCount} 首歌曲的随舞计划，预计 ${timeLabel(sessionSeconds)}（已计入每首前 5 秒倒计时）。确认后会进入随舞页面，并按报告中的顺序播放。`
+    return { answer, source, tools: runs, effects }
   }
   const requestedMinutes = Number(String(input.prompt).match(/(\d{1,2})\s*分钟/)?.[1] || report.plan.totalMinutes)
   const durationNote = requestedMinutes === report.plan.totalMinutes
