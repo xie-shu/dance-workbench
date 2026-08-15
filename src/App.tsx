@@ -386,13 +386,18 @@ function AnalysisPage({ settings, exercises, completedIds, tracks, todayIds, res
 
 function AssistantSettingsModal({ settings, onClose, onSave }: { settings: AssistantSettings; onClose: () => void; onSave: (settings: AssistantSettings) => void }) {
   const [draft, setDraft] = useState(settings)
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [])
   const updateKnowledge = (key: keyof AssistantSettings['knowledge'], value: string) => setDraft((current) => ({ ...current, knowledge: { ...current.knowledge, [key]: value } }))
   const fields: Array<{ key: keyof AssistantSettings['knowledge']; label: string }> = [
     { key: 'bodyProfile', label: '身体状态与旧伤' },
     { key: 'preferences', label: '训练偏好与目标' },
     { key: 'constraints', label: '场地、设备与时间限制' },
   ]
-  return <div className="modal-backdrop" role="dialog" aria-modal="true"><form className="form-modal settings-modal" onSubmit={(event) => { event.preventDefault(); onSave(draft) }}><button className="modal-close" type="button" onClick={onClose}><X/></button><span className="eyebrow">Agent preferences</span><h2>训练 Agent 设置</h2><p className="form-note">这些上下文会影响选曲、动作顺序和训练报告；本地音频不会上传。</p><label>训练规划提示词<textarea rows={7} value={draft.systemPrompt} onChange={(event) => setDraft((current) => ({ ...current, systemPrompt: event.target.value }))}/></label><div className="settings-grid">{fields.map(({ key, label }) => <label key={key}>{label}<textarea rows={2} value={draft.knowledge[key]} onChange={(event) => updateKnowledge(key, event.target.value)}/></label>)}</div><button className="primary-btn full" type="submit"><Check/>保存设置</button></form></div>
+  return createPortal(<div className="modal-backdrop settings-backdrop" role="dialog" aria-modal="true"><form className="form-modal settings-modal" onSubmit={(event) => { event.preventDefault(); onSave(draft) }}><button className="modal-close" type="button" onClick={onClose}><X/></button><span className="eyebrow">Agent preferences</span><h2>训练 Agent 设置</h2><p className="form-note">这些上下文会影响选曲、动作顺序和训练报告；本地音频不会上传。</p><label>训练规划提示词<textarea rows={7} value={draft.systemPrompt} onChange={(event) => setDraft((current) => ({ ...current, systemPrompt: event.target.value }))}/></label><div className="settings-grid">{fields.map(({ key, label }) => <label key={key}>{label}<textarea rows={2} value={draft.knowledge[key]} onChange={(event) => updateKnowledge(key, event.target.value)}/></label>)}</div><button className="primary-btn full" type="submit"><Check/>保存设置</button></form></div>, document.body)
 }
 
 function AssistantResultView({ result, action }: { result: AssistantResult; action?: React.ReactNode }) {
