@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react'
 import { motion } from 'motion/react'
+import { createPortal } from 'react-dom'
 import {
   Check,
   ChevronDown,
@@ -279,7 +280,7 @@ function TrainingPage({ exercises, completed, tracks, onComplete, onAdd, onRegen
   return <div className="page">
     <PageHeader eyebrow="Training library" title="基本功训练" description="从分离度到律动，按身体的学习顺序慢慢累积。" action={<button className="icon-btn bordered" onClick={() => setShowAdd(true)} title="添加训练"><Plus/></button>}/>
     <div className="plan-banner"><div><Sparkles/><span><strong>AI 今日推荐</strong><small>基于 Jazz / K-pop · 每项 1–3 分钟</small></span></div><button onClick={onRegenerate}><RefreshCw size={16}/>换一组</button></div>
-    <section className="training-player"><div className="training-player-icon"><Music2/></div><div><span className="eyebrow">Training soundtrack</span><strong>{trainingTrack?.title ?? '等待添加音乐'}</strong><small>{trainingTrack ? `${trainingTrack.artist} · 第一段副歌自动播放` : '曲库歌曲会随机出现'}</small></div><button className="icon-btn" onClick={pickTrack} title="换一首训练音乐"><Shuffle size={17}/></button></section>
+    <section className="training-player"><div className="training-player-icon"><Music2/></div><div><span className="eyebrow">Training soundtrack</span><strong>{trainingTrack?.title ?? '等待添加音乐'}</strong><small>{trainingTrack ? `${trainingTrack.artist} · 完整歌曲自动播放` : '曲库歌曲会随机出现'}</small></div><button className="icon-btn" onClick={pickTrack} title="换一首训练音乐"><Shuffle size={17}/></button></section>
     <div className="chip-row" role="tablist" aria-label="动作分类">{categories.map((item) => <button key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)}>{item}</button>)}</div>
     <section className="exercise-list">
       {shown.map((item) => <article key={item.id} className="exercise-row">
@@ -300,6 +301,11 @@ function TimerModal({ exercise, track, onClose, onDone, notify }: { exercise: Ex
   const [soundUrl, setSoundUrl] = useState<string | null>(() => track?.audioUrl ?? null)
   const audioRef = useRef<HTMLAudioElement>(null)
   useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [])
+  useEffect(() => {
     let active = true
     let loadedUrl: string | null = null
     if (track?.blobKey) getMedia(track.blobKey).then((media) => { if (active && media) { loadedUrl = URL.createObjectURL(media.blob); setSoundUrl(loadedUrl) } })
@@ -313,30 +319,21 @@ function TimerModal({ exercise, track, onClose, onDone, notify }: { exercise: Ex
   useEffect(() => {
     if (!audioRef.current) return
     if (running && soundUrl) {
-      const { start } = track ? chorusWindow(track) : { start: 0 }
-      audioRef.current.currentTime = start
+      if (audioRef.current.ended) audioRef.current.currentTime = 0
       audioRef.current.play().catch(() => notify('浏览器阻止了自动播放，请点击计时器中的播放按钮'))
     }
     if (!running) audioRef.current.pause()
   }, [running, soundUrl, track, notify])
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio || !track || track.source !== 'local') return
-    const { start, end } = chorusWindow(track)
-    const stopAtChorusEnd = () => { if (audio.currentTime >= end) { audio.pause(); audio.currentTime = start } }
-    audio.addEventListener('timeupdate', stopAtChorusEnd)
-    return () => audio.removeEventListener('timeupdate', stopAtChorusEnd)
-  }, [track, soundUrl])
   const mins = String(Math.floor(left / 60)).padStart(2, '0')
   const secs = String(left % 60).padStart(2, '0')
-  return <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="timer-modal">
+  return createPortal(<div className="modal-backdrop timer-backdrop" role="dialog" aria-modal="true" aria-label={`${exercise.name}训练计时器`}><div className="timer-modal">
     <button className="modal-close" onClick={onClose} aria-label="关闭"><X/></button><span className="eyebrow">Focus timer</span><h2>{exercise.name}</h2><p>{exercise.cue}</p>
-    <div className="timer-sound"><Music2 size={14}/><span>{track ? `训练音乐 · ${track.title}` : '未选择训练音乐'}</span>{track && <small>第一段副歌 · {formatSeconds(chorusWindow(track).start)}–{formatSeconds(chorusWindow(track).end)}</small>}</div>
+    <div className="timer-sound"><Music2 size={14}/><span>{track ? `训练音乐 · ${track.title}` : '未选择训练音乐'}</span>{track && <small>完整歌曲循环播放</small>}</div>
     <div className="timer-ring" style={{ '--progress': `${(total - left) / total * 360}deg` } as React.CSSProperties}><div><strong>{mins}:{secs}</strong><small>{running ? '保持呼吸，继续' : '准备好了就开始'}</small></div></div>
     <div className="timer-actions"><button className="secondary-btn" onClick={() => { setLeft(total); setRunning(false) }}><RotateCcw/>重置</button><button className="primary-btn" onClick={() => setRunning(!running)}>{running ? <Pause/> : <Play/>}{running ? '暂停' : '开始'}</button></div>
     <button className="finish-link" onClick={onDone}><Check size={17}/>完成这组训练</button>
     <audio ref={audioRef} src={soundUrl ?? undefined} loop preload="metadata"/>
-  </div></div>
+  </div></div>, document.body)
 }
 
 function AddExerciseModal({ onClose, onAdd }: { onClose: () => void; onAdd: (item: Exercise) => void }) {
@@ -403,6 +400,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   const [phase, setPhase] = useState<'idle' | 'countdown' | 'playing' | 'paused'>('idle')
   const [countdown, setCountdown] = useState(5)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const countdownAudioRef = useRef<HTMLAudioElement>(null)
   const autoplayRef = useRef<MusicTrack | null>(null)
   const currentRef = useRef<MusicTrack | null>(null)
   const countdownTargetRef = useRef<MusicTrack | null>(null)
@@ -412,6 +410,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   const [plannedDanceProgress, setPlannedDanceProgress] = useState<{ index: number; total: number } | null>(null)
   const countdownIntervalRef = useRef<number | null>(null)
   const countdownTimeoutRef = useRef<number | null>(null)
+  const countdownPrepareRef = useRef<Promise<void> | null>(null)
   const [filter, setFilter] = useState<'all' | 'review'>('all')
   const filtered = filter === 'review' ? tracks.filter((item) => item.status === 'review') : tracks
 
@@ -425,10 +424,10 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     countdownTimeoutRef.current = null
   }
   const stopCountdownAudio = () => {
-    if (!audioRef.current) return
-    audioRef.current.pause()
-    audioRef.current.currentTime = 0
-    audioRef.current.playbackRate = 1
+    if (!countdownAudioRef.current) return
+    countdownAudioRef.current.pause()
+    countdownAudioRef.current.currentTime = 0
+    countdownAudioRef.current.playbackRate = 1
   }
   const loadTrack = async (track: MusicTrack, autoplay = false, startAt = 0) => {
     if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl)
@@ -445,12 +444,6 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
       }, 0)
     }
   }
-  const pickAndPlay = async () => {
-    const candidates = tracks.length > 1 ? tracks.filter((item) => item.id !== currentRef.current?.id) : tracks
-    const next = candidates[randomIndex(candidates.length)]
-    autoplayRef.current = next
-    await loadTrack(next)
-  }
   const cancelPlannedDance = () => {
     plannedDanceActiveRef.current = false
     plannedDanceQueueRef.current = []
@@ -463,35 +456,42 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   const startCountdown = (plannedTrack?: MusicTrack) => {
     if (!tracks.length) { notify('先添加一首歌曲，再开始随机舞蹈'); return }
     clearCountdownTimers()
-    countdownTargetRef.current = plannedTrack ?? null
+    const candidates = tracks.length > 1 ? tracks.filter((item) => item.id !== currentRef.current?.id) : tracks
+    const target = plannedTrack ?? candidates[randomIndex(candidates.length)]
+    countdownTargetRef.current = target
     setPlannedCountdownTrack(plannedTrack ?? null)
     autoplayRef.current = null
-    audioRef.current?.pause()
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.muted = false }
     setPlaying(false)
     setSessionActive(true)
     setPhase('countdown')
     setCountdown(5)
-    const audio = audioRef.current
+    countdownPrepareRef.current = loadTrack(target).then(async () => {
+      const musicAudio = audioRef.current
+      if (!musicAudio || countdownTargetRef.current?.id !== target.id) return
+      musicAudio.muted = true
+      musicAudio.currentTime = chorusWindow(target).start
+      await musicAudio.play().catch(() => undefined)
+    })
+    const audio = countdownAudioRef.current
     if (audio) {
-      audio.src = `${ASSET}/music/countdown-5s.mp3?v=2`
       audio.currentTime = 0
-      audio.playbackRate = 1.28
+      audio.playbackRate = 1
       audio.play().catch(() => notify('请再点一次播放，浏览器才能播放倒计时声音'))
     }
     countdownIntervalRef.current = window.setInterval(() => {
       setCountdown((value) => Math.max(1, value - 1))
     }, 1000)
-    countdownTimeoutRef.current = window.setTimeout(() => {
+    countdownTimeoutRef.current = window.setTimeout(async () => {
       const target = countdownTargetRef.current
       countdownTargetRef.current = null
       setPlannedCountdownTrack(null)
       clearCountdownTimers()
       stopCountdownAudio()
       if (target) {
+        await countdownPrepareRef.current
         autoplayRef.current = target
-        void loadTrack(target)
-      } else {
-        void pickAndPlay()
+        await playPendingTrack()
       }
     }, 5000)
   }
@@ -501,7 +501,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     if (!track || !audio) return
     autoplayRef.current = null
     const nextStart = startAt ?? (playerMode === 'dance' ? chorusWindow(track).start : 0)
-    try { audio.currentTime = nextStart; await audio.play(); setPhase('playing'); setSessionActive(true) }
+    try { audio.currentTime = nextStart; audio.muted = false; await audio.play(); setPlaying(true); setPhase('playing'); setSessionActive(true) }
     catch { setPhase('paused'); notify('浏览器阻止了自动播放，请点一下中间的播放键') }
   }
   const toggleSession = async () => {
@@ -519,7 +519,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     }
     if (phase === 'countdown') {
       clearCountdownTimers(); stopCountdownAudio(); countdownTargetRef.current = null; setPlannedCountdownTrack(null); cancelPlannedDance()
-      if (audioRef.current && audioUrl) { audioRef.current.src = audioUrl; audioRef.current.load() }
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current.muted = false }
       setSessionActive(false); setPhase(current ? 'paused' : 'idle'); return
     }
     if (playing && audioRef.current) {
@@ -534,6 +534,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   }
   const selectTrack = async (track: MusicTrack) => {
     cancelPlannedDance(); clearCountdownTimers(); stopCountdownAudio(); audioRef.current?.pause()
+    if (audioRef.current) audioRef.current.muted = false
     setSessionActive(false); setPhase('idle'); autoplayRef.current = null
     await loadTrack(track, playerMode === 'listen', 0)
   }
@@ -561,6 +562,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     countdownTargetRef.current = null
     setPlannedCountdownTrack(null)
     audioRef.current?.pause()
+    if (audioRef.current) audioRef.current.muted = false
     setPlaying(false)
     if (plannedDanceActiveRef.current) {
       continueDanceSession()
@@ -604,7 +606,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   }
   const switchPlayerMode = (next: PlayerMode) => {
     cancelPlannedDance(); clearCountdownTimers(); stopCountdownAudio(); autoplayRef.current = null; countdownTargetRef.current = null; setPlannedCountdownTrack(null)
-    if (audioRef.current && audioUrl) { audioRef.current.src = audioUrl; audioRef.current.load() }
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.muted = false }
     setPlaying(false); setSessionActive(false); setPhase(current ? 'paused' : 'idle'); setPlayerMode(next)
   }
   const handleEnded = () => {
@@ -641,7 +643,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     }, 0)
     return () => window.clearTimeout(timer)
   }, [launchRequest])
-  useEffect(() => () => { clearCountdownTimers(); stopCountdownAudio() }, [])
+  useEffect(() => () => { clearCountdownTimers(); stopCountdownAudio(); audioRef.current?.pause() }, [])
   const mark = (status: MusicTrack['status']) => { if (!current) return; setTracks((items) => items.map((item) => item.id === current.id ? { ...item, status } : item)); setCurrent({ ...current, status }); notify(status === 'remembered' ? '记住啦，继续保持' : '已加入复习清单') }
   const updateClip = (updated: MusicTrack) => {
     setTracks((items) => items.map((item) => item.id === updated.id ? updated : item))
@@ -660,7 +662,8 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     <section className={`player-deck ${phase === 'countdown' || playing ? 'is-active' : ''}`}>
       <div className="vinyl-wrap"><div className={`stage-orbit ${playing ? 'music-active' : ''}`}>{phase === 'countdown' ? <><span className="countdown-number" key={countdown} aria-live="assertive">{countdown}</span><small>GET READY</small></> : <div className={`vinyl ${playing ? 'playing' : ''}`}><div className="vinyl-label"><Music2/></div></div>}<i/><i/><i/><i/><i/></div>{phase !== 'countdown' && <span className="tone-arm"/>}</div>
       <div className="now-playing"><span className="eyebrow">{phase === 'countdown' ? plannedCountdownTrack ? 'Planned dance' : 'Next dance' : playerMode === 'listen' ? 'Now listening' : 'Now dancing'}</span><h2>{phase === 'countdown' ? plannedCountdownTrack ? `准备开始 ${plannedCountdownTrack.title}` : '准备，下一首马上开始' : current?.title ?? (playerMode === 'listen' ? '选择一种方式开始听歌' : '开启连续随机舞蹈')}</h2><p>{phase === 'countdown' ? plannedCountdownTrack ? '倒计时结束后自动播放计划歌曲' : '倒计时结束后自动抽取并播放' : current ? playerMode === 'listen' ? `${current.artist} · 完整播放` : `${current.artist} · 随舞片段 ${formatSeconds(chorusWindow(current).start)}–${formatSeconds(chorusWindow(current).end)}` : playerMode === 'listen' ? '完整播放曲库中的每一首歌' : '每首片段结束后，倒数 5 秒自动进入下一首'}</p>{playerMode === 'listen' && current && phase !== 'countdown' && <div className="listen-progress"><span>{formatSeconds(playbackPosition)}</span><input aria-label="调整当前歌曲播放位置" type="range" min="0" max={Math.max(trackDuration, 1)} step="0.1" value={Math.min(playbackPosition, Math.max(trackDuration, 1))} onChange={(event) => seekListening(Number(event.target.value))}/><span>{formatSeconds(trackDuration)}</span></div>}<div className="player-controls">{playerMode === 'listen' ? <button className="icon-btn" onClick={() => void previousListenTrack()} title="上一首"><SkipBack/></button> : <button className="icon-btn" onClick={beginRandomDance} title="退出当前计划并开始随机随舞"><Shuffle/></button>}<button className="play-main" onClick={() => void toggleSession()} title={playing || phase === 'countdown' ? '暂停' : '开始或继续'}>{phase === 'countdown' || playing ? <Pause/> : <Play/>}</button>{playerMode === 'listen' ? <button className="icon-btn" onClick={() => void nextListenTrack(true)} title="下一首"><SkipForward/></button> : <button className="icon-btn" onClick={skipDanceTrack} title={plannedDanceProgress ? '跳到计划下一首' : '跳过并倒计时下一首'}><RefreshCw/></button>}<span className={`session-status ${sessionActive ? 'active' : ''}`}><i/>{plannedDanceProgress ? `计划 ${plannedDanceProgress.index}/${plannedDanceProgress.total}` : sessionActive ? phase === 'countdown' ? '倒计时中' : playerMode === 'listen' ? listenMode === 'shuffle' ? '随机播放中' : listenMode === 'sequential' ? '顺序播放中' : '单曲循环中' : '连续随舞中' : '已暂停'}</span></div>{current && phase !== 'countdown' && playerMode === 'dance' && <div className="memory-actions"><button onClick={() => mark('remembered')} className={current.status === 'remembered' ? 'active' : ''}><Check/>记得</button><button onClick={() => mark('review')} className={current.status === 'review' ? 'active' : ''}><RotateCcw/>要复习</button></div>}</div>
-      <audio ref={audioRef} src={audioUrl ?? undefined} preload="auto" loop={playerMode === 'listen' && listenMode === 'single'} onCanPlay={() => void playPendingTrack()} onLoadedMetadata={handleMetadata} onTimeUpdate={handleTimeUpdate} onEnded={handleEnded} onPause={() => setPlaying(false)} onPlay={() => setPlaying(true)}/>
+      <audio ref={countdownAudioRef} src={`${ASSET}/music/countdown-5s.mp3?v=3`} preload="auto"/>
+      <audio ref={audioRef} src={audioUrl ?? undefined} preload="auto" loop={playerMode === 'listen' && listenMode === 'single'} onCanPlay={() => void playPendingTrack()} onLoadedMetadata={handleMetadata} onTimeUpdate={handleTimeUpdate} onEnded={handleEnded} onPause={() => setPlaying(false)} onPlay={() => { if (!countdownTargetRef.current) setPlaying(true) }}/>
     </section>
     <div className="library-toolbar"><div><h2>我的曲库</h2><span>{tracks.length} 首 · {tracks.filter((item) => item.status === 'review').length} 首待复习</span></div><div className="segmented"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button><button className={filter === 'review' ? 'active' : ''} onClick={() => setFilter('review')}>待复习</button></div></div>
     {filtered.length ? <section className="track-list">{filtered.map((track, index) => <TrackRow key={track.id} track={track} index={index} active={current?.id === track.id} onSelect={selectTrack} onDelete={deleteTrack} onSave={updateClip}/>)}</section> : <div className="empty-library"><div className="empty-disc"><Music2/></div><h3>{filter === 'review' ? '没有待复习的歌曲' : '曲库还是空的'}</h3><p>{filter === 'review' ? '忘记动作时标记“要复习”，它就会出现在这里。' : '上传 MP3 / M4A 添加可直接播放的音乐。'}</p>{filter === 'all' && <button className="primary-btn" onClick={() => setShowAdd(true)}><Plus/>添加第一首歌</button>}</div>}

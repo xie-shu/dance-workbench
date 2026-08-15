@@ -1,4 +1,4 @@
-const CACHE = 'dance-workbench-v2'
+const CACHE = 'dance-workbench-v3'
 const APP_BASE = new URL('./', self.registration.scope).pathname
 
 self.addEventListener('install', (event) => {
