@@ -191,7 +191,9 @@ function App() {
             notify={notify}
           />
         )}
-        {tab === 'music' && <MusicPage tracks={tracks} setTracks={setTracks} launchRequest={danceLaunch} onLaunchConsumed={() => setDanceLaunch(null)} notify={notify}/>}
+        <div className="persistent-tab-panel" hidden={tab !== 'music'}>
+          <MusicPage tracks={tracks} setTracks={setTracks} launchRequest={danceLaunch} onLaunchConsumed={() => setDanceLaunch(null)} notify={notify}/>
+        </div>
       </main>
 
       <nav className="mobile-nav" aria-label="主导航">

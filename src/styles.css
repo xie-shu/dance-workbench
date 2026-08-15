@@ -32,6 +32,7 @@ button { border: 0; cursor: pointer; }
 .app-shell { min-height: 100vh; background: rgba(250, 247, 247, .28); }
 .sidebar { display: none; }
 .main-content { min-height: 100vh; padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
+.persistent-tab-panel[hidden] { display: none; }
 .page { width: min(100%, 760px); margin: 0 auto; padding: 24px 18px 48px; animation: page-in .42s cubic-bezier(.22,.7,.22,1) both; }
 .eyebrow { display: block; margin-bottom: 7px; color: var(--berry); font-size: 11px; font-weight: 800; letter-spacing: 0; text-transform: uppercase; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 24px; }
