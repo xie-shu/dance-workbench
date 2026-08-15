@@ -97,7 +97,7 @@ export function TrainingSession({ result, exercises, tracks, onClose, onComplete
   useEffect(() => {
     const audio = countdownAudioRef.current
     if (!audio) return
-    audio.playbackRate = 1.28
+    audio.playbackRate = 1
     void audio.play().catch(() => undefined)
   }, [])
 
@@ -144,7 +144,7 @@ export function TrainingSession({ result, exercises, tracks, onClose, onComplete
         setPhase('countdown')
         if (countdownAudioRef.current) {
           countdownAudioRef.current.currentTime = 0
-          countdownAudioRef.current.playbackRate = 1.28
+          countdownAudioRef.current.playbackRate = 1
           void countdownAudioRef.current.play().catch(() => undefined)
         }
         return
@@ -202,7 +202,7 @@ export function TrainingSession({ result, exercises, tracks, onClose, onComplete
     setPhase('countdown')
     if (countdownAudioRef.current) {
       countdownAudioRef.current.currentTime = 0
-      countdownAudioRef.current.playbackRate = 1.28
+      countdownAudioRef.current.playbackRate = 1
       void countdownAudioRef.current.play().catch(() => undefined)
     }
   }
@@ -216,7 +216,7 @@ export function TrainingSession({ result, exercises, tracks, onClose, onComplete
 
   return createPortal(<div className="training-session-layer" role="dialog" aria-modal="true" aria-label="执行训练计划">
     <audio ref={audioRef} src={soundUrl ?? undefined} preload="auto" onCanPlay={() => { if (phase === 'running') void audioRef.current?.play().catch(() => undefined) }} onEnded={handleTrackEnded}/>
-    <audio ref={countdownAudioRef} src={`${import.meta.env.BASE_URL}assets/music/countdown-5s.mp3?v=2`} preload="auto"/>
+    <audio ref={countdownAudioRef} src={`${import.meta.env.BASE_URL}assets/music/countdown-5s.mp3?v=3`} preload="auto"/>
     <header className="session-topbar">
       <div><span>Agent live session</span><strong>{result.title}</strong></div>
       <button onClick={close} aria-label="退出训练" title="退出训练"><X/></button>

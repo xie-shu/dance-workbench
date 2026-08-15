@@ -89,11 +89,11 @@ button { border: 0; cursor: pointer; }
 .overview-panel { margin-bottom: 14px; padding: 16px 13px 15px; border: 1px solid rgba(173,139,151,.26); border-radius: 8px; background: rgba(251,248,247,.96); box-shadow: var(--shadow); }
 .panel-label { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; font-size: 13px; font-weight: 800; }
 .panel-label svg { color: #bd8fa0; }
-.overview-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .overview-item { min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
-.progress-ring { --value: 0deg; --ring: #bb93a1; width: 75px; height: 75px; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--ring) var(--value), #eee7e9 0); }
-.progress-ring::before { content: ""; width: 62px; height: 62px; border-radius: 50%; background: #fbf8f7; }
-.progress-ring > span { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.progress-ring { --value: 0deg; --ring: #bb93a1; position: relative; width: 75px; height: 75px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--ring) var(--value), #eee7e9 0); }
+.progress-ring::before { content: ""; grid-area: 1 / 1; width: 62px; height: 62px; border-radius: 50%; background: #fbf8f7; }
+.progress-ring > span { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
 .progress-ring svg { width: 16px; height: 16px; color: var(--ring); }
 .progress-ring strong { font-size: 14px; }
 .overview-item.mauve .progress-ring { --ring: #a99aa8; }
@@ -208,6 +208,8 @@ button { border: 0; cursor: pointer; }
 /* modals and forms */
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding: 18px; background: rgba(44,35,41,.48); backdrop-filter: blur(4px); animation: fade-in .22s ease both; }
 .timer-modal, .form-modal { position: relative; width: min(100%, 510px); max-height: calc(100vh - 36px); overflow-y: auto; padding: 29px 22px calc(24px + env(safe-area-inset-bottom)); border-radius: 8px 8px 5px 5px; background: var(--cream); box-shadow: 0 24px 70px rgba(50,30,42,.28); }
+.timer-backdrop { z-index: 100; width: 100%; height: 100dvh; padding: 0; overscroll-behavior: contain; }
+.timer-backdrop .timer-modal { width: 100%; max-height: min(88dvh, 720px); border-radius: 16px 16px 0 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .modal-close { position: absolute; top: 15px; right: 15px; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; color: #81727a; background: #f2e9ed; }
 .timer-modal h2, .form-modal h2 { padding-right: 42px; margin-bottom: 8px; font-size: 24px; }
 .timer-modal > p { color: var(--muted); font-size: 12px; line-height: 1.55; }
@@ -672,6 +674,8 @@ button { border: 0; cursor: pointer; }
   .stage-orbit small { bottom: 26px; }
   .now-playing h2 { font-size: 27px; }
   .modal-backdrop { align-items: center; }
+  .timer-backdrop { padding: 18px; }
+  .timer-backdrop .timer-modal { width: min(100%, 510px); max-height: calc(100dvh - 36px); border-radius: 8px; }
   .settings-grid { grid-template-columns: repeat(3, 1fr); }
   .training-player { grid-template-columns: 42px 1fr 40px; padding: 15px 16px; }
   .session-stage { grid-template-columns: minmax(0, 1fr) 240px; grid-template-rows: auto auto auto auto; column-gap: 42px; }
