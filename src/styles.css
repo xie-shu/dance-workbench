@@ -687,6 +687,16 @@ button { border: 0; cursor: pointer; }
   .session-controls { grid-row: 5; grid-column: 2; align-self: start; flex-wrap: wrap; padding-top: 8px; }
 }
 
+/* iOS Safari zooms the page when a focused editable control is smaller than 16px. */
+@media (max-width: 859px) {
+  .form-modal input:not([type="file"]),
+  .form-modal select,
+  .form-modal textarea,
+  .agent-composer textarea,
+  .assistant-fields input,
+  .assistant-fields select { font-size: 16px; }
+}
+
 @media (max-width: 620px) {
   .ai-mode-rail { grid-template-columns: repeat(4, 150px); margin-right: -18px; margin-left: -18px; padding-left: 18px; padding-right: 18px; }
   .ai-mode-rail.two-modes { grid-template-columns: repeat(2, minmax(170px, 1fr)); }
