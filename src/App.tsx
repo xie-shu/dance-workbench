@@ -318,19 +318,31 @@ function TimerModal({ exercise, track, onClose, onDone, notify }: { exercise: Ex
   }, [running, left])
   useEffect(() => {
     if (!audioRef.current) return
-    if (running && soundUrl) {
-      if (audioRef.current.ended) audioRef.current.currentTime = 0
-      audioRef.current.play().catch(() => notify('浏览器阻止了自动播放，请点击计时器中的播放按钮'))
-    }
     if (!running) audioRef.current.pause()
   }, [running, soundUrl, track, notify])
+  const toggleRunning = () => {
+    const audio = audioRef.current
+    if (running) {
+      audio?.pause()
+      setRunning(false)
+      return
+    }
+    setRunning(true)
+    if (audio && soundUrl) {
+      if (audio.ended) audio.currentTime = 0
+      void audio.play().catch(() => {
+        setRunning(false)
+        notify('浏览器阻止了播放，请再点击一次“开始”')
+      })
+    }
+  }
   const mins = String(Math.floor(left / 60)).padStart(2, '0')
   const secs = String(left % 60).padStart(2, '0')
   return createPortal(<div className="modal-backdrop timer-backdrop" role="dialog" aria-modal="true" aria-label={`${exercise.name}训练计时器`}><div className="timer-modal">
     <button className="modal-close" onClick={onClose} aria-label="关闭"><X/></button><span className="eyebrow">Focus timer</span><h2>{exercise.name}</h2><p>{exercise.cue}</p>
     <div className="timer-sound"><Music2 size={14}/><span>{track ? `训练音乐 · ${track.title}` : '未选择训练音乐'}</span>{track && <small>完整歌曲循环播放</small>}</div>
     <div className="timer-ring" style={{ '--progress': `${(total - left) / total * 360}deg` } as React.CSSProperties}><div><strong>{mins}:{secs}</strong><small>{running ? '保持呼吸，继续' : '准备好了就开始'}</small></div></div>
-    <div className="timer-actions"><button className="secondary-btn" onClick={() => { setLeft(total); setRunning(false) }}><RotateCcw/>重置</button><button className="primary-btn" onClick={() => setRunning(!running)}>{running ? <Pause/> : <Play/>}{running ? '暂停' : '开始'}</button></div>
+    <div className="timer-actions"><button className="secondary-btn" onClick={() => { audioRef.current?.pause(); setLeft(total); setRunning(false) }}><RotateCcw/>重置</button><button className="primary-btn" onClick={toggleRunning}>{running ? <Pause/> : <Play/>}{running ? '暂停' : '开始'}</button></div>
     <button className="finish-link" onClick={onDone}><Check size={17}/>完成这组训练</button>
     <audio ref={audioRef} src={soundUrl ?? undefined} loop preload="metadata"/>
   </div></div>, document.body)
@@ -411,6 +423,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   const countdownIntervalRef = useRef<number | null>(null)
   const countdownRunRef = useRef(0)
   const plannedTrackPreloadsRef = useRef<Map<string, HTMLAudioElement>>(new Map())
+  const countdownBlockedRef = useRef(false)
   const [filter, setFilter] = useState<'all' | 'review'>('all')
   const filtered = filter === 'review' ? tracks.filter((item) => item.status === 'review') : tracks
 
@@ -468,6 +481,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     clearCountdownTimers()
     stopCountdownAudio()
     const runId = ++countdownRunRef.current
+    countdownBlockedRef.current = false
     const candidates = tracks.length > 1 ? tracks.filter((item) => item.id !== currentRef.current?.id) : tracks
     const target = plannedTrack ?? candidates[randomIndex(candidates.length)]
     preloadPlannedTrack(target)
@@ -521,10 +535,16 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     audio.onerror = () => {
       if (countdownRunRef.current !== runId) return
       clearCountdownTimers()
+      countdownBlockedRef.current = true
+      setPhase('paused')
       notify('倒计时音频加载失败，请检查网络后再试')
     }
     void audio.play().catch(() => {
-      if (countdownRunRef.current === runId) notify('请再点一次播放，浏览器才能播放倒计时声音')
+      if (countdownRunRef.current === runId) {
+        countdownBlockedRef.current = true
+        setPhase('paused')
+        notify('请点击“开始或继续”，浏览器才能播放倒计时声音')
+      }
     })
   }
   const playPendingTrack = async (startAt?: number) => {
@@ -537,6 +557,12 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     catch { setPhase('paused'); notify('浏览器阻止了自动播放，请点一下中间的播放键') }
   }
   const toggleSession = async () => {
+    if (playerMode === 'dance' && countdownBlockedRef.current) {
+      const target = countdownTargetRef.current
+      if (target) startCountdown(target)
+      else beginRandomDance()
+      return
+    }
     if (playerMode === 'listen') {
       if (playing && audioRef.current) { audioRef.current.pause(); setSessionActive(false); setPhase('paused'); return }
       if (current && audioUrl && audioRef.current) {
