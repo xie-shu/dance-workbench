@@ -409,8 +409,8 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   const [plannedCountdownTrack, setPlannedCountdownTrack] = useState<MusicTrack | null>(null)
   const [plannedDanceProgress, setPlannedDanceProgress] = useState<{ index: number; total: number } | null>(null)
   const countdownIntervalRef = useRef<number | null>(null)
-  const countdownTimeoutRef = useRef<number | null>(null)
-  const countdownPrepareRef = useRef<Promise<void> | null>(null)
+  const countdownRunRef = useRef(0)
+  const plannedTrackPreloadsRef = useRef<Map<string, HTMLAudioElement>>(new Map())
   const [filter, setFilter] = useState<'all' | 'review'>('all')
   const filtered = filter === 'review' ? tracks.filter((item) => item.status === 'review') : tracks
 
@@ -419,15 +419,25 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
 
   const clearCountdownTimers = () => {
     if (countdownIntervalRef.current) window.clearInterval(countdownIntervalRef.current)
-    if (countdownTimeoutRef.current) window.clearTimeout(countdownTimeoutRef.current)
     countdownIntervalRef.current = null
-    countdownTimeoutRef.current = null
   }
   const stopCountdownAudio = () => {
     if (!countdownAudioRef.current) return
+    countdownAudioRef.current.onplaying = null
+    countdownAudioRef.current.ontimeupdate = null
+    countdownAudioRef.current.onended = null
+    countdownAudioRef.current.onerror = null
     countdownAudioRef.current.pause()
     countdownAudioRef.current.currentTime = 0
     countdownAudioRef.current.playbackRate = 1
+  }
+  const preloadPlannedTrack = (track: MusicTrack) => {
+    if (!track.audioUrl || plannedTrackPreloadsRef.current.has(track.id)) return
+    const preloader = new Audio()
+    preloader.preload = 'auto'
+    preloader.src = track.audioUrl
+    preloader.load()
+    plannedTrackPreloadsRef.current.set(track.id, preloader)
   }
   const loadTrack = async (track: MusicTrack, autoplay = false, startAt = 0) => {
     if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl)
@@ -456,8 +466,11 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
   const startCountdown = (plannedTrack?: MusicTrack) => {
     if (!tracks.length) { notify('先添加一首歌曲，再开始随机舞蹈'); return }
     clearCountdownTimers()
+    stopCountdownAudio()
+    const runId = ++countdownRunRef.current
     const candidates = tracks.length > 1 ? tracks.filter((item) => item.id !== currentRef.current?.id) : tracks
     const target = plannedTrack ?? candidates[randomIndex(candidates.length)]
+    preloadPlannedTrack(target)
     countdownTargetRef.current = target
     setPlannedCountdownTrack(plannedTrack ?? null)
     autoplayRef.current = null
@@ -466,34 +479,53 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     setSessionActive(true)
     setPhase('countdown')
     setCountdown(5)
-    countdownPrepareRef.current = loadTrack(target).then(async () => {
+    const preparePromise = loadTrack(target).then(async () => {
       const musicAudio = audioRef.current
-      if (!musicAudio || countdownTargetRef.current?.id !== target.id) return
+      if (!musicAudio || countdownRunRef.current !== runId || countdownTargetRef.current?.id !== target.id) return
       musicAudio.muted = true
       musicAudio.currentTime = chorusWindow(target).start
       await musicAudio.play().catch(() => undefined)
     })
     const audio = countdownAudioRef.current
-    if (audio) {
-      audio.currentTime = 0
-      audio.playbackRate = 1
-      audio.play().catch(() => notify('请再点一次播放，浏览器才能播放倒计时声音'))
+    if (!audio) return
+    let finished = false
+    const syncCountdownNumber = () => {
+      if (countdownRunRef.current !== runId || audio.paused) return
+      const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 5
+      const digitDuration = duration / 5
+      setCountdown(Math.max(1, 5 - Math.floor(audio.currentTime / digitDuration)))
     }
-    countdownIntervalRef.current = window.setInterval(() => {
-      setCountdown((value) => Math.max(1, value - 1))
-    }, 1000)
-    countdownTimeoutRef.current = window.setTimeout(async () => {
-      const target = countdownTargetRef.current
-      countdownTargetRef.current = null
-      setPlannedCountdownTrack(null)
+    const finishCountdown = async () => {
+      if (finished || countdownRunRef.current !== runId) return
+      finished = true
+      const activeTarget = countdownTargetRef.current
+      if (!activeTarget || activeTarget.id !== target.id) return
       clearCountdownTimers()
       stopCountdownAudio()
-      if (target) {
-        await countdownPrepareRef.current
-        autoplayRef.current = target
-        await playPendingTrack()
-      }
-    }, 5000)
+      await preparePromise
+      if (countdownRunRef.current !== runId) return
+      countdownTargetRef.current = null
+      setPlannedCountdownTrack(null)
+      autoplayRef.current = activeTarget
+      await playPendingTrack()
+    }
+    audio.currentTime = 0
+    audio.playbackRate = 1
+    audio.onplaying = () => {
+      if (countdownRunRef.current !== runId) return
+      syncCountdownNumber()
+      if (countdownIntervalRef.current === null) countdownIntervalRef.current = window.setInterval(syncCountdownNumber, 100)
+    }
+    audio.ontimeupdate = syncCountdownNumber
+    audio.onended = () => void finishCountdown()
+    audio.onerror = () => {
+      if (countdownRunRef.current !== runId) return
+      clearCountdownTimers()
+      notify('倒计时音频加载失败，请检查网络后再试')
+    }
+    void audio.play().catch(() => {
+      if (countdownRunRef.current === runId) notify('请再点一次播放，浏览器才能播放倒计时声音')
+    })
   }
   const playPendingTrack = async (startAt?: number) => {
     const track = autoplayRef.current
@@ -518,7 +550,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
       return
     }
     if (phase === 'countdown') {
-      clearCountdownTimers(); stopCountdownAudio(); countdownTargetRef.current = null; setPlannedCountdownTrack(null); cancelPlannedDance()
+      countdownRunRef.current += 1; clearCountdownTimers(); stopCountdownAudio(); countdownTargetRef.current = null; setPlannedCountdownTrack(null); cancelPlannedDance()
       if (audioRef.current) { audioRef.current.pause(); audioRef.current.muted = false }
       setSessionActive(false); setPhase(current ? 'paused' : 'idle'); return
     }
@@ -533,7 +565,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     beginRandomDance()
   }
   const selectTrack = async (track: MusicTrack) => {
-    cancelPlannedDance(); clearCountdownTimers(); stopCountdownAudio(); audioRef.current?.pause()
+    cancelPlannedDance(); countdownRunRef.current += 1; clearCountdownTimers(); stopCountdownAudio(); audioRef.current?.pause()
     if (audioRef.current) audioRef.current.muted = false
     setSessionActive(false); setPhase('idle'); autoplayRef.current = null
     await loadTrack(track, playerMode === 'listen', 0)
@@ -556,6 +588,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     notify('随舞计划已完成')
   }
   const skipDanceTrack = () => {
+    countdownRunRef.current += 1
     clearCountdownTimers()
     stopCountdownAudio()
     autoplayRef.current = null
@@ -605,7 +638,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     await loadTrack(previous, true, 0)
   }
   const switchPlayerMode = (next: PlayerMode) => {
-    cancelPlannedDance(); clearCountdownTimers(); stopCountdownAudio(); autoplayRef.current = null; countdownTargetRef.current = null; setPlannedCountdownTrack(null)
+    cancelPlannedDance(); countdownRunRef.current += 1; clearCountdownTimers(); stopCountdownAudio(); autoplayRef.current = null; countdownTargetRef.current = null; setPlannedCountdownTrack(null)
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.muted = false }
     setPlaying(false); setSessionActive(false); setPhase(current ? 'paused' : 'idle'); setPlayerMode(next)
   }
@@ -631,6 +664,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     const plannedTracks = request.trackIds.map((id) => tracks.find((track) => track.id === id)).filter(Boolean) as MusicTrack[]
     onLaunchConsumed()
     if (!plannedTracks.length) { notify('随舞计划中的歌曲已不存在，请重新生成计划'); return }
+    plannedTracks.forEach(preloadPlannedTrack)
     plannedDanceActiveRef.current = true
     plannedDanceQueueRef.current = plannedTracks.slice(1)
     setPlannedDanceProgress({ index: 1, total: plannedTracks.length })
@@ -643,7 +677,14 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     }, 0)
     return () => window.clearTimeout(timer)
   }, [launchRequest])
-  useEffect(() => () => { clearCountdownTimers(); stopCountdownAudio(); audioRef.current?.pause() }, [])
+  useEffect(() => () => {
+    countdownRunRef.current += 1
+    clearCountdownTimers()
+    stopCountdownAudio()
+    audioRef.current?.pause()
+    plannedTrackPreloadsRef.current.forEach((audio) => { audio.pause(); audio.removeAttribute('src'); audio.load() })
+    plannedTrackPreloadsRef.current.clear()
+  }, [])
   const mark = (status: MusicTrack['status']) => { if (!current) return; setTracks((items) => items.map((item) => item.id === current.id ? { ...item, status } : item)); setCurrent({ ...current, status }); notify(status === 'remembered' ? '记住啦，继续保持' : '已加入复习清单') }
   const updateClip = (updated: MusicTrack) => {
     setTracks((items) => items.map((item) => item.id === updated.id ? updated : item))
