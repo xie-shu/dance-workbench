@@ -213,9 +213,9 @@ button { border: 0; cursor: pointer; }
 .modal-close { position: absolute; top: 15px; right: 15px; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; color: #81727a; background: #f2e9ed; }
 .timer-modal h2, .form-modal h2 { padding-right: 42px; margin-bottom: 8px; font-size: 24px; }
 .timer-modal > p { color: var(--muted); font-size: 12px; line-height: 1.55; }
-.timer-ring { --progress: 0deg; width: 190px; height: 190px; display: grid; place-items: center; margin: 28px auto; border-radius: 50%; background: conic-gradient(var(--berry) var(--progress), #f0dfe5 0); }
-.timer-ring::before { content: ""; width: 163px; height: 163px; border-radius: 50%; background: var(--cream); }
-.timer-ring > div { position: absolute; display: flex; flex-direction: column; align-items: center; }
+.timer-ring { --progress: 0deg; position: relative; width: 190px; height: 190px; display: grid; flex: 0 0 auto; place-items: center; margin: 28px auto; border-radius: 50%; background: conic-gradient(var(--berry) var(--progress), #f0dfe5 0); }
+.timer-ring::before { content: ""; position: absolute; inset: 50% auto auto 50%; width: 163px; height: 163px; border-radius: 50%; background: var(--cream); transform: translate(-50%, -50%); }
+.timer-ring > div { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .timer-ring strong { font-size: 37px; font-variant-numeric: tabular-nums; }
 .timer-ring small { margin-top: 5px; color: var(--muted); font-size: 10px; }
 .timer-sound { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 18px 0 -6px; padding: 9px 10px; border-radius: 6px; color: #7c6871; background: #f1e6ea; font-size: 10px; }
