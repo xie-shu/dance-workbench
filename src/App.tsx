@@ -92,7 +92,7 @@ function App() {
     const saved = readLocal<MusicTrack[]>('music-tracks', [])
     return saved.length ? saved.map((track) => {
       const seed = initialTracks.find((item) => item.id === track.id)
-      return { ...seed, ...track, durationSeconds: track.durationSeconds ?? seed?.durationSeconds }
+      return { ...seed, ...track, audioUrl: seed?.audioUrl ?? track.audioUrl, durationSeconds: track.durationSeconds ?? seed?.durationSeconds }
     }) : initialTracks
   })
   const [assistantResults, setAssistantResults] = useState<AssistantResult[]>(restoreAssistantResults)
@@ -270,6 +270,22 @@ function TrainingPage({ exercises, completed, tracks, onComplete, onAdd, onRegen
   const [active, setActive] = useState<Exercise | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [trainingTrack, setTrainingTrack] = useState<MusicTrack | null>(() => tracks[Math.floor(Math.random() * tracks.length)] ?? null)
+  const trainingPreloadRef = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => {
+    trainingPreloadRef.current?.pause()
+    trainingPreloadRef.current = null
+    if (!trainingTrack?.audioUrl) return
+    const preloader = new Audio()
+    preloader.preload = 'auto'
+    preloader.src = trainingTrack.audioUrl
+    preloader.load()
+    trainingPreloadRef.current = preloader
+    return () => {
+      preloader.pause()
+      preloader.removeAttribute('src')
+      preloader.load()
+    }
+  }, [trainingTrack?.audioUrl])
   const categories = ['全部', ...new Set(exercises.map((item) => item.category))]
   const shown = category === '全部' ? exercises : exercises.filter((item) => item.category === category)
   const pickTrack = () => {
@@ -344,7 +360,7 @@ function TimerModal({ exercise, track, onClose, onDone, notify }: { exercise: Ex
     <div className="timer-ring" style={{ '--progress': `${(total - left) / total * 360}deg` } as React.CSSProperties}><div><strong>{mins}:{secs}</strong><small>{running ? '保持呼吸，继续' : '准备好了就开始'}</small></div></div>
     <div className="timer-actions"><button className="secondary-btn" onClick={() => { audioRef.current?.pause(); setLeft(total); setRunning(false) }}><RotateCcw/>重置</button><button className="primary-btn" onClick={toggleRunning}>{running ? <Pause/> : <Play/>}{running ? '暂停' : '开始'}</button></div>
     <button className="finish-link" onClick={onDone}><Check size={17}/>完成这组训练</button>
-    <audio ref={audioRef} src={soundUrl ?? undefined} loop preload="metadata"/>
+    <audio ref={audioRef} src={soundUrl ?? undefined} loop preload="auto"/>
   </div></div>, document.body)
 }
 
@@ -457,6 +473,23 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     preloader.load()
     plannedTrackPreloadsRef.current.set(track.id, preloader)
   }
+  const waitForMediaReady = (audio: HTMLAudioElement, timeout = 8000) => {
+    if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        audio.removeEventListener('canplay', finish)
+        audio.removeEventListener('error', finish)
+        resolve()
+      }
+      const timer = window.setTimeout(finish, timeout)
+      audio.addEventListener('canplay', finish, { once: true })
+      audio.addEventListener('error', finish, { once: true })
+    })
+  }
   const loadTrack = async (track: MusicTrack, autoplay = false, startAt = 0) => {
     if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl)
     currentRef.current = track
@@ -501,9 +534,10 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     const preparePromise = loadTrack(target).then(async () => {
       const musicAudio = audioRef.current
       if (!musicAudio || countdownRunRef.current !== runId || countdownTargetRef.current?.id !== target.id) return
-      musicAudio.muted = true
+      musicAudio.pause()
+      musicAudio.muted = false
       musicAudio.currentTime = chorusWindow(target).start
-      await musicAudio.play().catch(() => undefined)
+      await waitForMediaReady(musicAudio)
     })
     const audio = countdownAudioRef.current
     if (!audio) return
@@ -527,6 +561,8 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
       setPlannedCountdownTrack(null)
       autoplayRef.current = activeTarget
       await playPendingTrack()
+      const nextTrack = plannedDanceQueueRef.current[0]
+      if (nextTrack) preloadPlannedTrack(nextTrack)
     }
     audio.currentTime = 0
     audio.playbackRate = 1
@@ -695,7 +731,7 @@ function MusicPage({ tracks, setTracks, launchRequest, onLaunchConsumed, notify 
     const plannedTracks = request.trackIds.map((id) => tracks.find((track) => track.id === id)).filter(Boolean) as MusicTrack[]
     onLaunchConsumed()
     if (!plannedTracks.length) { notify('随舞计划中的歌曲已不存在，请重新生成计划'); return }
-    plannedTracks.forEach(preloadPlannedTrack)
+    preloadPlannedTrack(plannedTracks[0])
     plannedDanceActiveRef.current = true
     plannedDanceQueueRef.current = plannedTracks.slice(1)
     setPlannedDanceProgress({ index: 1, total: plannedTracks.length })

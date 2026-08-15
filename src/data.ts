@@ -29,11 +29,11 @@ const localTrack = (id: string, title: string, artist: string, fileName: string,
 })
 
 export const initialTracks: MusicTrack[] = [
-  localTrack('dreams-come-true', 'Dreams Come True', 'aespa', 'dreams-come-true.mp3', 203, 52, 84, true),
-  localTrack('style', 'STYLE', 'Hearts2Hearts', 'style.mp3', 211, 48, 80),
-  localTrack('whiplash', 'Whiplash', 'aespa', 'whiplash.mp3', 191, 43, 75, true),
-  localTrack('thirsty', 'Thirsty', 'aespa', 'thirsty.mp3', 192, 48, 80, true),
-  localTrack('what-is-love', 'What is Love?', 'TWICE', 'what-is-love.mp3', 73, 40, 70, true),
-  localTrack('yes-or-yes', 'YES or YES', 'TWICE', 'yes-or-yes.mp3', 240, 52, 84),
-  localTrack('moonlight-sunrise', 'MOONLIGHT SUNRISE', 'TWICE', 'moonlight-sunrise.mp3', 181, 42, 74, true),
+  localTrack('dreams-come-true', 'Dreams Come True', 'aespa', 'dreams-come-true.m4a', 203, 52, 84, true),
+  localTrack('style', 'STYLE', 'Hearts2Hearts', 'style.m4a', 211, 48, 80),
+  localTrack('whiplash', 'Whiplash', 'aespa', 'whiplash.m4a', 191, 43, 75, true),
+  localTrack('thirsty', 'Thirsty', 'aespa', 'thirsty.m4a', 192, 48, 80, true),
+  localTrack('what-is-love', 'What is Love?', 'TWICE', 'what-is-love.m4a', 73, 40, 70, true),
+  localTrack('yes-or-yes', 'YES or YES', 'TWICE', 'yes-or-yes.m4a', 240, 52, 84),
+  localTrack('moonlight-sunrise', 'MOONLIGHT SUNRISE', 'TWICE', 'moonlight-sunrise.m4a', 181, 42, 74, true),
 ]
