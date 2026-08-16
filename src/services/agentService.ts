@@ -454,6 +454,7 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
 
 export async function runDanceAgent(prompt: string, context: AgentContext, history: AgentMessage[]): Promise<AgentRunResult> {
   const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim() || DEFAULT_AGENT_ENDPOINT
+  const requestPayload = { prompt, context, history: history.slice(-10) }
   let diagnostic = ''
   if (endpoint) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -462,7 +463,7 @@ export async function runDanceAgent(prompt: string, context: AgentContext, histo
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
           cache: 'no-store',
-          body: JSON.stringify({ prompt, context, history: history.slice(-10) }),
+          body: JSON.stringify(requestPayload),
         })
         if (!response.ok) throw new Error(`Agent proxy returned ${response.status}`)
         const payload = await response.json() as AgentRunResult
@@ -473,6 +474,17 @@ export async function runDanceAgent(prompt: string, context: AgentContext, histo
         console.warn(`Dance Agent cloud request failed on attempt ${attempt + 1}.`, error)
         if (attempt === 0) await wait(700)
       }
+    }
+    try {
+      const fallbackUrl = `${endpoint}?payload=${encodeURIComponent(JSON.stringify(requestPayload))}&_=${Date.now()}`
+      const response = await fetch(fallbackUrl, { method: 'GET', cache: 'no-store' })
+      if (!response.ok) throw new Error(`Agent GET fallback returned ${response.status}`)
+      const payload = await response.json() as AgentRunResult
+      if (!payload.answer || !Array.isArray(payload.tools) || !Array.isArray(payload.effects)) throw new Error('Invalid Agent GET result')
+      return payload
+    } catch (error) {
+      diagnostic = error instanceof Error ? error.message : diagnostic || '浏览器网络请求失败'
+      console.warn('Dance Agent GET fallback failed.', error)
     }
   }
   const result = await localAgent(prompt, context)

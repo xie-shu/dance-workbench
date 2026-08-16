@@ -1032,7 +1032,9 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') {
     return send(response, 200, { ok: true, mode: apiMode, model, skillCount: agentSkills.length }, origin)
   }
-  if (request.method !== 'POST' || request.url !== '/api/agent') return send(response, 404, { error: 'Not found' }, origin)
+  const agentUrl = new URL(request.url || '/', 'http://localhost')
+  const isAgentRequest = agentUrl.pathname === '/api/agent'
+  if (!isAgentRequest || !['GET', 'POST'].includes(request.method)) return send(response, 404, { error: 'Not found' }, origin)
   if (origin && !allowedOrigins.has(origin)) return send(response, 403, { error: 'Origin not allowed' }, origin)
   if (!apiKey) return send(response, 503, { error: 'OPENAI_API_KEY is not configured' }, origin)
 
@@ -1043,15 +1045,20 @@ const server = createServer(async (request, response) => {
   recent.push(now)
   hits.set(client, recent)
 
-  let raw = ''
-  for await (const chunk of request) {
-    raw += chunk
-    if (raw.length > 1_000_000) return send(response, 413, { error: 'Request too large' }, origin)
-  }
-
   let input
   try {
-    input = JSON.parse(raw)
+    if (request.method === 'GET') {
+      const encoded = agentUrl.searchParams.get('payload')
+      if (!encoded) throw new Error('Missing payload')
+      input = JSON.parse(encoded)
+    } else {
+      let raw = ''
+      for await (const chunk of request) {
+        raw += chunk
+        if (raw.length > 1_000_000) return send(response, 413, { error: 'Request too large' }, origin)
+      }
+      input = JSON.parse(raw)
+    }
   } catch {
     return send(response, 400, { error: 'Invalid JSON request' }, origin)
   }
