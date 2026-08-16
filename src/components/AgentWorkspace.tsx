@@ -8,7 +8,7 @@ import type { AgentEffect, AgentMemory, AgentMessage, AssistantResult, Exercise,
 const welcomeMessage: AgentMessage = {
   id: 'agent-welcome',
   role: 'assistant',
-  content: '可以和我聊练舞，也可以问曲库、今日计划、记忆和知识库。告诉我“生成 5 首随舞计划”，还能继续增删歌曲或重新洗牌。',
+  content: '可以自然聊舞感、动作理解和练舞方法，也可以问曲库、计划、记忆与知识库。需要执行时，告诉我“生成 5 首随舞计划”或“安排 10 分钟基本功”就好。',
   createdAt: '2026-08-14T00:00:00.000Z',
   source: 'local',
 }
