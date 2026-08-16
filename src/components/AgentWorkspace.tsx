@@ -171,7 +171,7 @@ export function AgentWorkspace({
       <div className="agent-context-stats">
         <div><BrainCircuit/><strong>{memories.length}</strong><small>长期记忆</small></div>
         <div><Database/><strong>{knowledge.length}</strong><small>知识条目</small></div>
-        <div><Wrench/><strong>9</strong><small>训练工具</small></div>
+        <div><Wrench/><strong>11</strong><small>Agent Skills</small></div>
       </div>
       <section className="agent-context-list">
         <div className="agent-context-heading"><BrainCircuit/><strong>最近记忆</strong></div>

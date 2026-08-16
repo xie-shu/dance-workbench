@@ -22,6 +22,8 @@ export type AgentContext = {
   latestResult?: AssistantResult | null
 }
 
+const DEFAULT_AGENT_ENDPOINT = 'https://dance-workbench-d0fsehk340b824c0.service.tcloudbase.com/api/agent'
+
 export const INITIAL_AGENT_KNOWLEDGE: KnowledgeNote[] = [
   {
     id: 'knowledge-training-order',
@@ -457,7 +459,7 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
 }
 
 export async function runDanceAgent(prompt: string, context: AgentContext, history: AgentMessage[]): Promise<AgentRunResult> {
-  const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim()
+  const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim() || DEFAULT_AGENT_ENDPOINT
   if (endpoint) {
     try {
       const response = await fetch(endpoint, {
