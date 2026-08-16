@@ -142,7 +142,7 @@ export function AgentWorkspace({
   return <section className="agent-desk">
     <div className="agent-chat">
       <header className="agent-chat-header">
-        <div className="agent-identity"><span><Bot/></span><div><strong>训练计划 Agent</strong><small>{running ? '正在选曲与安排训练' : '训练工具已就绪'}</small></div></div>
+        <div className="agent-identity"><span><Bot/></span><div><strong>舞蹈成长 Agent</strong><small>{running ? '正在理解问题与调用工具' : '对话与训练工具已就绪'}</small></div></div>
         <button className="icon-btn" onClick={() => setMessages([welcomeMessage])} aria-label="清空对话" title="清空对话"><Trash2/></button>
       </header>
       <div className="agent-thread" ref={threadRef} aria-live="polite">
