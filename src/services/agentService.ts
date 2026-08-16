@@ -459,7 +459,8 @@ export async function runDanceAgent(prompt: string, context: AgentContext, histo
       try {
         const response = await fetch(endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          cache: 'no-store',
           body: JSON.stringify({ prompt, context, history: history.slice(-10) }),
         })
         if (!response.ok) throw new Error(`Agent proxy returned ${response.status}`)

@@ -7,6 +7,7 @@ const model = process.env.OPENAI_MODEL || 'gpt-5-mini'
 const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
 const apiMode = process.env.OPENAI_API_MODE || 'responses'
 const requestTimeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 90_000)
+const modelRequestMaxAttempts = 3
 const allowedOrigins = new Set((process.env.AI_ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:41733,https://xie-shu.github.io,https://dance-workbench-d0fsehk340b824c0-1469379714.tcloudbaseapp.com').split(',').map((value) => value.trim()).filter(Boolean))
 const applicationOwnsCors = process.env.AI_CORS_MODE === 'application'
 const hits = new Map()
@@ -184,22 +185,37 @@ const agentSkills = [
 const skillsById = new Map(agentSkills.map((skill) => [skill.id, skill]))
 
 async function requestModel(path, body) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(requestTimeoutMs),
-  })
-  const raw = await response.text()
-  let payload
-  try {
-    payload = JSON.parse(raw)
-  } catch {
-    const contentType = response.headers.get('content-type') || 'unknown content type'
-    throw new Error(`Model provider returned non-JSON (${response.status}, ${contentType})`)
+  let lastError
+  for (let attempt = 0; attempt < modelRequestMaxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      })
+      const raw = await response.text()
+      let payload
+      try {
+        payload = JSON.parse(raw)
+      } catch {
+        const contentType = response.headers.get('content-type') || 'unknown content type'
+        throw new Error(`Model provider returned non-JSON (${response.status}, ${contentType})`)
+      }
+      if (response.ok) return payload
+      const error = new Error(`Model request failed (${response.status}): ${payload.error?.message || 'Unknown API error'}`)
+      if (response.status !== 429 && response.status < 500) {
+        error.nonRetryable = true
+        throw error
+      }
+      lastError = error
+    } catch (error) {
+      if (error?.nonRetryable) throw error
+      lastError = error
+    }
+    if (attempt < modelRequestMaxAttempts - 1) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)))
   }
-  if (!response.ok) throw new Error(`Model request failed (${response.status}): ${payload.error?.message || 'Unknown API error'}`)
-  return payload
+  throw lastError || new Error('Model request failed')
 }
 
 function searchScore(query, value) {
@@ -616,21 +632,7 @@ async function requestPlainText(instructions, input, history = []) {
 
 async function classifySkill(input) {
   const hint = deterministicSkillHint(input.prompt, input.context)
-  const catalog = agentSkills.map(({ id, description }) => ({ id, description }))
-  const instructions = `你是舞蹈工作台的意图路由器。只返回一个 JSON 对象，不要解释。\n可用 Skill：${JSON.stringify(catalog)}\n返回格式：{"skillId":"可用 Skill id","confidence":0到1,"reason":"不超过30字"}。\n涉及私人曲库、训练计划、记忆或知识库时必须选择对应 Skill。音视频内容分析当前选择 unsupported-media-analysis。`
-  try {
-    const answer = await requestPlainText(instructions, `安全规则给出的候选 Skill 是 ${hint}。用户问题：${input.prompt}`)
-    const parsed = parseJsonObject(answer)
-    const selected = skillsById.has(parsed?.skillId) ? parsed.skillId : hint
-    const protectedHints = new Set(['fundamentals-plan', 'random-dance-plan', 'music-library-query', 'memory-save', 'knowledge-save', 'knowledge-library-query', 'training-context-query', 'memory-query', 'exercise-library-query', 'current-date-query', 'unsupported-media-analysis'])
-    return {
-      skillId: protectedHints.has(hint) ? hint : selected,
-      confidence: Number.isFinite(parsed?.confidence) ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
-      reason: typeof parsed?.reason === 'string' ? parsed.reason.slice(0, 60) : '使用安全路由结果',
-    }
-  } catch {
-    return { skillId: hint, confidence: 0, reason: '模型路由不可用，使用安全路由' }
-  }
+  return { skillId: hint, confidence: 0.95, reason: '按工作台意图规则完成路由' }
 }
 
 function executeSkillRetrieval(skill, input, effects, runs) {

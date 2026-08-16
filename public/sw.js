@@ -1,4 +1,4 @@
-const CACHE = 'dance-workbench-v5'
+const CACHE = 'dance-workbench-v6'
 const APP_BASE = new URL('./', self.registration.scope).pathname
 const MUSIC_ASSETS = [
   'assets/music/countdown-5s.mp3?v=3',
@@ -43,6 +43,12 @@ async function rangeResponse(request) {
 }
 
 self.addEventListener('fetch', (event) => {
+  // Mutating/API requests must never enter CacheStorage. In particular, the
+  // cross-origin Agent POST needs to reach CloudBase unchanged in Chrome/iOS.
+  if (event.request.method !== 'GET') {
+    event.respondWith(fetch(event.request))
+    return
+  }
   if (event.request.mode === 'navigate') {
     event.respondWith(fetch(event.request).then((response) => {
       const copy = response.clone()

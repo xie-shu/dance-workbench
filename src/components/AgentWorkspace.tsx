@@ -12,7 +12,7 @@ const welcomeMessage: AgentMessage = {
   createdAt: '2026-08-14T00:00:00.000Z',
 }
 
-const messageStorageKey = 'training-agent-messages-v4'
+const messageStorageKey = 'training-agent-messages-v5'
 
 function isPlanConfirmation(prompt: string, hasPlan: boolean) {
   if (/(确认|开始|执行|就按|按这个|按它).*(计划|训练)|(开始|执行)(这个|该)?计划|好[，, ]*(开始|就按这个)/.test(prompt)) return true
@@ -67,6 +67,7 @@ export function AgentWorkspace({
     localStorage.removeItem('training-agent-messages-v1')
     localStorage.removeItem('training-agent-messages-v2')
     localStorage.removeItem('training-agent-messages-v3')
+    localStorage.removeItem('training-agent-messages-v4')
   }, [messages])
   useEffect(() => writeLocal('agent-memories', memories), [memories])
   useEffect(() => writeLocal('agent-knowledge', knowledge), [knowledge])
