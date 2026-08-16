@@ -8,9 +8,14 @@ const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').rep
 const apiMode = process.env.OPENAI_API_MODE || 'responses'
 const requestTimeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 90_000)
 const allowedOrigins = new Set((process.env.AI_ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:41733,https://xie-shu.github.io,https://dance-workbench-d0fsehk340b824c0-1469379714.tcloudbaseapp.com').split(',').map((value) => value.trim()).filter(Boolean))
+const applicationOwnsCors = process.env.AI_CORS_MODE === 'application'
 const hits = new Map()
 
 const agentTools = [
+  {
+    type: 'function', name: 'read_current_time', description: '读取当前日期、星期和时间。回答当前日期或星期前必须调用。', strict: true,
+    parameters: { type: 'object', additionalProperties: false, required: [], properties: {} },
+  },
   {
     type: 'function', name: 'read_training_context', description: '读取当前工作台统计、今日计划、完成记录和 Agent 设置。制定计划或回答这些当前事实前必须调用。', strict: true,
     parameters: { type: 'object', additionalProperties: false, required: [], properties: {} },
@@ -50,7 +55,7 @@ const agentTools = [
 ]
 
 const toolLabels = {
-  read_training_context: '读取训练上下文', read_memory: '读取长期记忆', search_knowledge: '检索舞蹈知识库', search_exercises: '检索动作库', search_tracks: '检索本地曲库',
+  read_current_time: '读取当前日期', read_training_context: '读取训练上下文', read_memory: '读取长期记忆', search_knowledge: '检索舞蹈知识库', search_exercises: '检索动作库', search_tracks: '检索本地曲库',
   set_today_plan: '更新今日计划', save_memory: '写入长期记忆', add_knowledge_note: '写入知识库', create_training_report: '生成训练报告',
 }
 
@@ -107,9 +112,16 @@ const agentSkills = [
   {
     id: 'dance-knowledge-qa',
     label: '舞蹈知识交流 Skill',
-    description: '回答舞蹈方法、舞感、风格、学习和训练相关问题；本地知识与动作库作为补充证据。',
-    tools: ['search_knowledge', 'search_exercises'],
-    sop: ['理解用户真正的问题', '按需检索本地知识与动作', '结合稳定通用知识自然回答'],
+    description: '使用模型的稳定通用知识回答舞蹈方法、舞感、风格、学习和训练问题，不读取私人数据。',
+    tools: [],
+    sop: ['理解用户真正的问题', '使用稳定通用舞蹈知识', '以私人舞蹈成长助手身份自然回答'],
+  },
+  {
+    id: 'knowledge-library-query',
+    label: '个人知识库查询 Skill',
+    description: '用户明确询问个人知识库内容，或要求根据个人知识库回答时使用。',
+    tools: ['search_knowledge'],
+    sop: ['检索个人舞蹈知识库', '区分检索证据与通用知识', '依据证据回答个人资料事实'],
   },
   {
     id: 'training-context-query',
@@ -159,6 +171,13 @@ const agentSkills = [
     description: '普通寒暄和不依赖私人数据的一般舞蹈交流。',
     tools: [],
     sop: ['判断是否需要私人事实', '直接回答稳定知识或说明不确定'],
+  },
+  {
+    id: 'current-date-query',
+    label: '当前日期查询 Skill',
+    description: '回答今天的日期、星期或当前时间，只读取系统当前时间。',
+    tools: ['read_current_time'],
+    sop: ['读取当前系统时间', '按用户所在时区格式化', '直接回答日期事实'],
   },
 ]
 
@@ -459,7 +478,20 @@ function addReferencedTrackRun(runs, tracks) {
 function executeAgentTool(call, context, effects, runs) {
   const args = JSON.parse(call.arguments || '{}')
   let result
-  if (call.name === 'read_training_context') {
+  if (call.name === 'read_current_time') {
+    const current = new Date()
+    const formatter = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+    result = { iso: current.toISOString(), timeZone: 'Asia/Shanghai', formatted: formatter.format(current) }
+  } else if (call.name === 'read_training_context') {
     result = {
       counts: {
         tracks: (context.tracks || []).length,
@@ -531,6 +563,8 @@ function executeAgentTool(call, context, effects, runs) {
         ? `动作库共 ${result.totalCount} 项 · 返回 ${result.matches.length} 项`
         : call.name === 'read_training_context'
           ? `今日 ${result.counts.todayPlan} 项 · 已完成 ${result.counts.completed} 项`
+          : call.name === 'read_current_time'
+            ? result.formatted
           : Array.isArray(result) ? `返回 ${count} 条结果` : '执行完成'
   runs.push({ id: makeId(), name: call.name, label: toolLabels[call.name] || call.name, summary, status: count ? 'done' : 'skipped' })
   return result
@@ -538,9 +572,11 @@ function executeAgentTool(call, context, effects, runs) {
 
 function deterministicSkillHint(prompt, context = {}) {
   const text = String(prompt)
+  if (/(今天|今日|现在|当前).*(星期几|周几|几号|日期|几点|时间)|(星期几|周几).*(今天|今日)/.test(text)) return 'current-date-query'
   if (isPlanningRequest(text, context)) return planModeForPrompt(text, context) === 'dance' ? 'random-dance-plan' : 'fundamentals-plan'
   if (isTrackLibraryFactRequest(text, context)) return 'music-library-query'
   if (/(加入知识库|保存为笔记|记到知识库)/.test(text)) return 'knowledge-save'
+  if (/(我的|个人|当前|工作台).*(知识库|知识条目|笔记)|(知识库|知识条目).*(多少|几条|有哪些|有哪|检索|查找|根据)/.test(text)) return 'knowledge-library-query'
   if (/(长期记忆|记得我|我的记忆|记录了我)/.test(text)) return 'memory-query'
   if (/(记住|以后|我喜欢|我不喜欢|我.*(?:不舒服|旧伤)|目标是)/.test(text)) return 'memory-save'
   if (/(今日计划|今天的计划|当前计划|完成记录|完成了|Agent 设置|训练上下文|上周|昨天|训练历史)/.test(text)) return 'training-context-query'
@@ -586,7 +622,7 @@ async function classifySkill(input) {
     const answer = await requestPlainText(instructions, `安全规则给出的候选 Skill 是 ${hint}。用户问题：${input.prompt}`)
     const parsed = parseJsonObject(answer)
     const selected = skillsById.has(parsed?.skillId) ? parsed.skillId : hint
-    const protectedHints = new Set(['fundamentals-plan', 'random-dance-plan', 'music-library-query', 'memory-save', 'knowledge-save', 'training-context-query', 'memory-query', 'exercise-library-query', 'unsupported-media-analysis'])
+    const protectedHints = new Set(['fundamentals-plan', 'random-dance-plan', 'music-library-query', 'memory-save', 'knowledge-save', 'knowledge-library-query', 'training-context-query', 'memory-query', 'exercise-library-query', 'current-date-query', 'unsupported-media-analysis'])
     return {
       skillId: protectedHints.has(hint) ? hint : selected,
       confidence: Number.isFinite(parsed?.confidence) ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
@@ -653,9 +689,16 @@ function deterministicFallback(skillId, retrieval, effects, context = {}) {
   }
   if (skillId === 'memory-query') return (retrieval.read_memory || []).length ? `当前读取到 ${(retrieval.read_memory || []).length} 条相关长期记忆。` : '当前没有记录相关长期记忆。'
   if (skillId === 'exercise-library-query') return retrieval.search_exercises ? `动作库当前有 ${retrieval.search_exercises.totalCount} 项。` : '我不知道，当前无法读取动作库。'
+  if (skillId === 'current-date-query') return retrieval.read_current_time?.formatted ? `现在是 ${retrieval.read_current_time.formatted}。` : '我不知道，当前无法读取系统时间。'
+  if (skillId === 'knowledge-library-query') {
+    const result = retrieval.search_knowledge
+    if (!result) return '我不知道，当前无法读取个人知识库。'
+    return result.matches?.length
+      ? `个人知识库中检索到 ${result.matches.length} 条相关内容：${result.matches.map((item) => item.title).join('、')}。`
+      : `个人知识库当前有 ${result.totalCount} 条内容，但没有检索到与这个问题直接相关的记录。`
+  }
   if (skillId === 'dance-knowledge-qa') {
-    const match = retrieval.search_knowledge?.matches?.[0]
-    return match ? `${match.title}：${match.content}` : '当前基本功知识库没有检索到能可靠回答这个问题的内容。'
+    return '云端 GPT 本轮没有返回可用结果，我不会把“知识库未命中”误当成这个问题没有答案。请稍后重试。'
   }
   if (skillId === 'unsupported-media-analysis') return '当前工作台还没有接入可靠的音频或视频内容分析工具，所以我不能假装已经分析过。'
   const saved = effects.find((effect) => effect.type === 'save_memory')?.memory
@@ -952,8 +995,10 @@ function runAgent(input) {
 }
 
 function send(response, status, payload, origin) {
-  if (origin && allowedOrigins.has(origin)) response.setHeader('Access-Control-Allow-Origin', origin)
-  response.setHeader('Vary', 'Origin')
+  if (applicationOwnsCors && origin && allowedOrigins.has(origin)) {
+    response.setHeader('Access-Control-Allow-Origin', origin)
+    response.setHeader('Vary', 'Origin')
+  }
   response.setHeader('Content-Type', 'application/json; charset=utf-8')
   response.statusCode = status
   response.end(JSON.stringify(payload))
@@ -972,7 +1017,7 @@ function outputText(payload) {
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin || ''
   if (request.method === 'OPTIONS') {
-    if (allowedOrigins.has(origin)) {
+    if (applicationOwnsCors && allowedOrigins.has(origin)) {
       response.setHeader('Access-Control-Allow-Origin', origin)
       response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
       response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')

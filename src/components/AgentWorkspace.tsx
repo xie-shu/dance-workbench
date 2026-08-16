@@ -151,7 +151,7 @@ export function AgentWorkspace({
           <div className="agent-bubble">
             <p>{message.content}</p>
             {message.tools?.length ? <div className="agent-tool-runs">{message.tools.map((item) => <div key={item.id} className={item.status}><span>{item.name.includes('search') || item.name.includes('read') ? <Search/> : item.status === 'done' ? <Check/> : <Wrench/>}</span><div><strong>{item.label}</strong><small>{item.summary}</small></div></div>)}</div> : null}
-            {message.role === 'assistant' && <small className="agent-source">{message.source === 'live' ? 'GPT Agent' : message.source === 'tool' ? '工作台数据' : '本地 Agent'}</small>}
+            {message.role === 'assistant' && <small className="agent-source">{message.source === 'live' ? 'GPT Agent' : message.source === 'tool' ? '工作台数据' : '离线工作台'}</small>}
           </div>
         </article>)}
         {running && <article className="agent-message assistant"><span className="agent-avatar"><Bot/></span><div className="agent-bubble thinking"><div className="agent-count-run">{Array.from({ length: 8 }, (_, index) => <i key={index}>{index + 1}</i>)}</div><span><LoaderCircle/>正在读取上下文并编排训练</span></div></article>}
@@ -171,7 +171,7 @@ export function AgentWorkspace({
       <div className="agent-context-stats">
         <div><BrainCircuit/><strong>{memories.length}</strong><small>长期记忆</small></div>
         <div><Database/><strong>{knowledge.length}</strong><small>知识条目</small></div>
-        <div><Wrench/><strong>11</strong><small>Agent Skills</small></div>
+        <div><Wrench/><strong>13</strong><small>Agent Skills</small></div>
       </div>
       <section className="agent-context-list">
         <div className="agent-context-heading"><BrainCircuit/><strong>最近记忆</strong></div>

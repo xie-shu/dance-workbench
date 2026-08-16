@@ -1,16 +1,12 @@
 exports.main = async (event = {}) => {
-  const headers = event.headers || {}
-  const origin = headers.origin || headers.Origin || ''
-  const allowedOrigins = new Set((process.env.AI_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean))
+  // CloudBase's HTTP gateway owns CORS for deployed functions. Adding the same
+  // header here produces a comma-joined duplicate that browsers reject.
   const responseHeaders = {
     'Content-Type': 'application/json; charset=utf-8',
     Vary: 'Origin',
   }
-  if (origin && allowedOrigins.has(origin)) responseHeaders['Access-Control-Allow-Origin'] = origin
   const method = event.httpMethod || event.requestContext?.http?.method || 'POST'
   if (method === 'OPTIONS') {
-    responseHeaders['Access-Control-Allow-Headers'] = 'Content-Type'
-    responseHeaders['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
     return { statusCode: 204, headers: responseHeaders, body: '' }
   }
   if (method !== 'POST') return { statusCode: 405, headers: responseHeaders, body: JSON.stringify({ error: 'Method not allowed' }) }

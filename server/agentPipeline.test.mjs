@@ -20,6 +20,15 @@ test('routes private facts through their dedicated skills', () => {
   assert.equal(testInternals.deterministicSkillHint('我的曲库有多少首歌？', { tracks }), 'music-library-query')
   assert.equal(testInternals.deterministicSkillHint('今天的计划完成了多少？', {}), 'training-context-query')
   assert.equal(testInternals.deterministicSkillHint('你记得我的旧伤吗？', {}), 'memory-query')
+  assert.equal(testInternals.deterministicSkillHint('我的知识库里有哪些内容？', {}), 'knowledge-library-query')
+  assert.equal(testInternals.deterministicSkillHint('今天星期几？', {}), 'current-date-query')
+})
+
+test('keeps general dance knowledge separate from personal retrieval', () => {
+  assert.equal(testInternals.deterministicSkillHint('Jazz 是什么风格？', {}), 'general-chat')
+  assert.equal(testInternals.deterministicSkillHint('动作很僵应该怎么练？', {}), 'dance-knowledge-qa')
+  const generalSkill = testInternals.agentSkills.find((skill) => skill.id === 'dance-knowledge-qa')
+  assert.deepEqual(generalSkill.tools, [])
 })
 
 test('keeps each exercise between one and three minutes', () => {
