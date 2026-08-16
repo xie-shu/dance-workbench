@@ -22,7 +22,11 @@ export type AgentContext = {
   latestResult?: AssistantResult | null
 }
 
-const DEFAULT_AGENT_ENDPOINT = 'https://dance-workbench-d0fsehk340b824c0.service.tcloudbase.com/api/agent'
+const CLOUD_AGENT_ENDPOINT = 'https://dance-workbench-d0fsehk340b824c0.service.tcloudbase.com/api/agent'
+
+function defaultAgentEndpoint() {
+  return window.location.hostname.endsWith('.vercel.app') ? '/api/agent' : CLOUD_AGENT_ENDPOINT
+}
 
 export const INITIAL_AGENT_KNOWLEDGE: KnowledgeNote[] = [
   {
@@ -453,7 +457,7 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
 }
 
 export async function runDanceAgent(prompt: string, context: AgentContext, history: AgentMessage[]): Promise<AgentRunResult> {
-  const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim() || DEFAULT_AGENT_ENDPOINT
+  const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim() || defaultAgentEndpoint()
   const requestPayload = { prompt, context, history: history.slice(-10) }
   let diagnostic = ''
   if (endpoint) {

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build:cloudbase",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "functions": {
+    "api/agent.mjs": {
+      "maxDuration": 60
+    }
+  }
+}
