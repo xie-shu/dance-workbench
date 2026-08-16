@@ -12,7 +12,7 @@ const welcomeMessage: AgentMessage = {
   createdAt: '2026-08-14T00:00:00.000Z',
 }
 
-const messageStorageKey = 'training-agent-messages-v5'
+const messageStorageKey = 'training-agent-messages-v6'
 
 function isPlanConfirmation(prompt: string, hasPlan: boolean) {
   if (/(确认|开始|执行|就按|按这个|按它).*(计划|训练)|(开始|执行)(这个|该)?计划|好[，, ]*(开始|就按这个)/.test(prompt)) return true
@@ -68,6 +68,7 @@ export function AgentWorkspace({
     localStorage.removeItem('training-agent-messages-v2')
     localStorage.removeItem('training-agent-messages-v3')
     localStorage.removeItem('training-agent-messages-v4')
+    localStorage.removeItem('training-agent-messages-v5')
   }, [messages])
   useEffect(() => writeLocal('agent-memories', memories), [memories])
   useEffect(() => writeLocal('agent-knowledge', knowledge), [knowledge])
@@ -125,7 +126,8 @@ export function AgentWorkspace({
     try {
       const result = await runDanceAgent(task, { exercises, tracks, completedIds, todayIds, memories, knowledge, settings, latestResult }, messages)
       result.effects.forEach(applyEffect)
-      setMessages((items) => [...items, { id: crypto.randomUUID(), role: 'assistant', content: result.answer, createdAt: new Date().toISOString(), source: result.source, tools: result.tools }])
+      const content = result.diagnostic ? `${result.answer}\n\n连接诊断：${result.diagnostic}` : result.answer
+      setMessages((items) => [...items, { id: crypto.randomUUID(), role: 'assistant', content, createdAt: new Date().toISOString(), source: result.source, tools: result.tools }])
     } catch {
       setMessages((items) => [...items, { id: crypto.randomUUID(), role: 'assistant', content: '这次任务没有执行完成。请保留当前页面后再试一次。', createdAt: new Date().toISOString(), source: 'local' }])
     } finally {

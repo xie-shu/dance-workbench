@@ -733,8 +733,9 @@ async function runSkillPipeline(input) {
     const answer = await requestPlainText(finalInstructions, `以下是本轮可信上下文：\n${JSON.stringify(evidence)}\n\n用户问题：${input.prompt}`, input.history || [])
     if (!String(answer).trim()) throw new Error('Empty model answer')
     return { answer: String(answer).trim(), source: 'live', tools: runs, effects }
-  } catch {
-    return { answer: deterministicFallback(skill.id, retrieval, effects, input.context), source: runs.length > 1 ? 'tool' : 'local', tools: runs, effects }
+  } catch (error) {
+    const diagnostic = error instanceof Error ? error.message.slice(0, 180) : '模型服务请求失败'
+    return { answer: deterministicFallback(skill.id, retrieval, effects, input.context), source: runs.length > 1 ? 'tool' : 'local', tools: runs, effects, diagnostic }
   }
 }
 

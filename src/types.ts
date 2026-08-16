@@ -103,4 +103,5 @@ export type AgentRunResult = {
   source: 'local' | 'live' | 'tool'
   tools: AgentToolRun[]
   effects: AgentEffect[]
+  diagnostic?: string
 }

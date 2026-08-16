@@ -454,6 +454,7 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
 
 export async function runDanceAgent(prompt: string, context: AgentContext, history: AgentMessage[]): Promise<AgentRunResult> {
   const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim() || DEFAULT_AGENT_ENDPOINT
+  let diagnostic = ''
   if (endpoint) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -468,10 +469,12 @@ export async function runDanceAgent(prompt: string, context: AgentContext, histo
         if (!payload.answer || !Array.isArray(payload.tools) || !Array.isArray(payload.effects)) throw new Error('Invalid agent result')
         return payload
       } catch (error) {
+        diagnostic = error instanceof Error ? error.message : '浏览器网络请求失败'
         console.warn(`Dance Agent cloud request failed on attempt ${attempt + 1}.`, error)
         if (attempt === 0) await wait(700)
       }
     }
   }
-  return localAgent(prompt, context)
+  const result = await localAgent(prompt, context)
+  return { ...result, diagnostic: diagnostic || '云端 Agent 地址不可用' }
 }

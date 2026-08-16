@@ -10,7 +10,12 @@ createRoot(document.getElementById('root')!).render(
 )
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
-    scope: import.meta.env.BASE_URL,
+  navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+    const hadController = Boolean(navigator.serviceWorker.controller)
+    const removed = (await Promise.all(registrations.map((registration) => registration.unregister()))).some(Boolean)
+    if (hadController && removed && !sessionStorage.getItem('dance-sw-reset')) {
+      sessionStorage.setItem('dance-sw-reset', 'done')
+      window.location.reload()
+    }
   })
 }
