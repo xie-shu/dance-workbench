@@ -8,6 +8,7 @@
     "ai:server": "node --env-file-if-exists=.env.local server/index.mjs",
     "start:agent": "node server/index.mjs",
     "build": "tsc -b && vite build",
+    "build:cloudbase": "tsc -b && vite build --base /",
     "lint": "eslint .",
     "test": "node --test server/*.test.mjs",
     "preview": "vite preview --host 0.0.0.0"
