@@ -455,19 +455,21 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
 export async function runDanceAgent(prompt: string, context: AgentContext, history: AgentMessage[]): Promise<AgentRunResult> {
   const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim() || DEFAULT_AGENT_ENDPOINT
   if (endpoint) {
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, context, history: history.slice(-10) }),
-      })
-      if (!response.ok) throw new Error(`Agent proxy returned ${response.status}`)
-      const payload = await response.json() as AgentRunResult
-      if (!payload.answer || !Array.isArray(payload.tools) || !Array.isArray(payload.effects)) throw new Error('Invalid agent result')
-      return payload
-    } catch (error) {
-      console.warn('Dance Agent cloud request failed; using offline tools.', error)
-      // The local tool runner keeps the Agent usable when the GPT proxy is unavailable.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, context, history: history.slice(-10) }),
+        })
+        if (!response.ok) throw new Error(`Agent proxy returned ${response.status}`)
+        const payload = await response.json() as AgentRunResult
+        if (!payload.answer || !Array.isArray(payload.tools) || !Array.isArray(payload.effects)) throw new Error('Invalid agent result')
+        return payload
+      } catch (error) {
+        console.warn(`Dance Agent cloud request failed on attempt ${attempt + 1}.`, error)
+        if (attempt === 0) await wait(700)
+      }
     }
   }
   return localAgent(prompt, context)

@@ -10,10 +10,9 @@ const welcomeMessage: AgentMessage = {
   role: 'assistant',
   content: '可以自然聊舞感、动作理解和练舞方法，也可以问曲库、计划、记忆与知识库。需要执行时，告诉我“生成 5 首随舞计划”或“安排 10 分钟基本功”就好。',
   createdAt: '2026-08-14T00:00:00.000Z',
-  source: 'local',
 }
 
-const messageStorageKey = 'training-agent-messages-v3'
+const messageStorageKey = 'training-agent-messages-v4'
 
 function isPlanConfirmation(prompt: string, hasPlan: boolean) {
   if (/(确认|开始|执行|就按|按这个|按它).*(计划|训练)|(开始|执行)(这个|该)?计划|好[，, ]*(开始|就按这个)/.test(prompt)) return true
@@ -67,6 +66,7 @@ export function AgentWorkspace({
     writeLocal(messageStorageKey, messages.slice(-40))
     localStorage.removeItem('training-agent-messages-v1')
     localStorage.removeItem('training-agent-messages-v2')
+    localStorage.removeItem('training-agent-messages-v3')
   }, [messages])
   useEffect(() => writeLocal('agent-memories', memories), [memories])
   useEffect(() => writeLocal('agent-knowledge', knowledge), [knowledge])
@@ -151,7 +151,7 @@ export function AgentWorkspace({
           <div className="agent-bubble">
             <p>{message.content}</p>
             {message.tools?.length ? <div className="agent-tool-runs">{message.tools.map((item) => <div key={item.id} className={item.status}><span>{item.name.includes('search') || item.name.includes('read') ? <Search/> : item.status === 'done' ? <Check/> : <Wrench/>}</span><div><strong>{item.label}</strong><small>{item.summary}</small></div></div>)}</div> : null}
-            {message.role === 'assistant' && <small className="agent-source">{message.source === 'live' ? 'GPT Agent' : message.source === 'tool' ? '工作台数据' : '离线工作台'}</small>}
+            {message.role === 'assistant' && <small className="agent-source">{message.source === 'live' ? 'GPT Agent' : message.source === 'tool' ? '工作台数据' : message.source === 'local' ? '离线工作台' : '系统引导'}</small>}
           </div>
         </article>)}
         {running && <article className="agent-message assistant"><span className="agent-avatar"><Bot/></span><div className="agent-bubble thinking"><div className="agent-count-run">{Array.from({ length: 8 }, (_, index) => <i key={index}>{index + 1}</i>)}</div><span><LoaderCircle/>正在读取上下文并编排训练</span></div></article>}
