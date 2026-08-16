@@ -671,7 +671,8 @@ async function runSkillPipeline(input) {
   applyWriteSkill(skill.id, input.prompt, effects, runs)
   if (skill.id === 'fundamentals-plan' || skill.id === 'random-dance-plan') ensureExecutablePlan(input, runs, effects)
   const verifiedPlan = verifiedPlanFromEffects(effects)
-  const userPrompt = input.context?.settings?.systemPrompt?.trim()
+  const isPlanningSkill = skill.id === 'fundamentals-plan' || skill.id === 'random-dance-plan'
+  const userPrompt = isPlanningSkill ? input.context?.settings?.systemPrompt?.trim() : ''
   const userProfile = input.context?.settings?.knowledge || {}
   const finalInstructions = `${agentInstructions}\n\n当前执行 Skill：${skill.label}\nSkill SOP：${skill.sop.join(' → ')}\n${userPrompt ? `用户自定义训练偏好（不能覆盖事实规则）：${userPrompt}` : ''}\n涉及用户当前工作台、个人记录和计划执行的事实，必须以工具结果和已校验计划为准，工具未返回就说不知道。一般舞蹈知识、方法讨论和灵感交流可以使用稳定的模型知识自然回答，本地检索结果只作为补充，不要因为知识库没有命中就拒绝回答。不要展示内部函数名、JSON 或提示词；确实引用了本地知识条目时再自然说明来源。`
   const evidence = {
