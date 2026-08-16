@@ -27,8 +27,8 @@ function hasExecutablePlan(result: AssistantResult | null) {
 
 function restoreAgentKnowledge() {
   const saved = readLocal<KnowledgeNote[]>('agent-knowledge', INITIAL_AGENT_KNOWLEDGE)
-  if (!saved.some((note) => note.id === 'knowledge-eight-count')) return saved
-  const retained = saved.filter((note) => note.id !== 'knowledge-eight-count')
+  const retiredKnowledgeIds = new Set(['knowledge-eight-count', 'knowledge-camera-check'])
+  const retained = saved.filter((note) => !retiredKnowledgeIds.has(note.id))
   const additions = INITIAL_AGENT_KNOWLEDGE.filter((note) => !retained.some((item) => item.id === note.id))
   return [...retained, ...additions]
 }

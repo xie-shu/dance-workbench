@@ -39,13 +39,6 @@ export const INITIAL_AGENT_KNOWLEDGE: KnowledgeNote[] = [
     tags: ['选曲', '训练计划'],
     createdAt: '2026-08-14T00:00:00.000Z',
   },
-  {
-    id: 'knowledge-camera-check',
-    title: '自拍视频检查点',
-    content: '固定正面全身机位，检查动作是否落拍、定格轮廓是否清楚、重心是否提前到位，以及连续两遍的力度是否一致。',
-    tags: ['复盘', '拍摄'],
-    createdAt: '2026-08-14T00:00:00.000Z',
-  },
 ]
 
 const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
