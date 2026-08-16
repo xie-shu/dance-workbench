@@ -8,12 +8,11 @@ import type { AgentEffect, AgentMemory, AgentMessage, AssistantResult, Exercise,
 const welcomeMessage: AgentMessage = {
   id: 'agent-welcome',
   role: 'assistant',
-  content: '可以和我聊练舞，也可以问曲库、今日计划、记忆和知识库。告诉我“生成 5 首随舞计划”，还能继续增删歌曲或重新洗牌。',
+  content: '可以自然聊舞感、动作理解和练舞方法，也可以问曲库、计划、记忆与知识库。需要执行时，告诉我“生成 5 首随舞计划”或“安排 10 分钟基本功”就好。',
   createdAt: '2026-08-14T00:00:00.000Z',
-  source: 'local',
 }
 
-const messageStorageKey = 'training-agent-messages-v3'
+const messageStorageKey = 'training-agent-messages-v6'
 
 function isPlanConfirmation(prompt: string, hasPlan: boolean) {
   if (/(确认|开始|执行|就按|按这个|按它).*(计划|训练)|(开始|执行)(这个|该)?计划|好[，, ]*(开始|就按这个)/.test(prompt)) return true
@@ -27,8 +26,8 @@ function hasExecutablePlan(result: AssistantResult | null) {
 
 function restoreAgentKnowledge() {
   const saved = readLocal<KnowledgeNote[]>('agent-knowledge', INITIAL_AGENT_KNOWLEDGE)
-  if (!saved.some((note) => note.id === 'knowledge-eight-count')) return saved
-  const retained = saved.filter((note) => note.id !== 'knowledge-eight-count')
+  const retiredKnowledgeIds = new Set(['knowledge-eight-count', 'knowledge-camera-check'])
+  const retained = saved.filter((note) => !retiredKnowledgeIds.has(note.id))
   const additions = INITIAL_AGENT_KNOWLEDGE.filter((note) => !retained.some((item) => item.id === note.id))
   return [...retained, ...additions]
 }
@@ -67,6 +66,9 @@ export function AgentWorkspace({
     writeLocal(messageStorageKey, messages.slice(-40))
     localStorage.removeItem('training-agent-messages-v1')
     localStorage.removeItem('training-agent-messages-v2')
+    localStorage.removeItem('training-agent-messages-v3')
+    localStorage.removeItem('training-agent-messages-v4')
+    localStorage.removeItem('training-agent-messages-v5')
   }, [messages])
   useEffect(() => writeLocal('agent-memories', memories), [memories])
   useEffect(() => writeLocal('agent-knowledge', knowledge), [knowledge])
@@ -124,7 +126,8 @@ export function AgentWorkspace({
     try {
       const result = await runDanceAgent(task, { exercises, tracks, completedIds, todayIds, memories, knowledge, settings, latestResult }, messages)
       result.effects.forEach(applyEffect)
-      setMessages((items) => [...items, { id: crypto.randomUUID(), role: 'assistant', content: result.answer, createdAt: new Date().toISOString(), source: result.source, tools: result.tools }])
+      const content = result.diagnostic ? `${result.answer}\n\n连接诊断：${result.diagnostic}` : result.answer
+      setMessages((items) => [...items, { id: crypto.randomUUID(), role: 'assistant', content, createdAt: new Date().toISOString(), source: result.source, tools: result.tools }])
     } catch {
       setMessages((items) => [...items, { id: crypto.randomUUID(), role: 'assistant', content: '这次任务没有执行完成。请保留当前页面后再试一次。', createdAt: new Date().toISOString(), source: 'local' }])
     } finally {
@@ -142,7 +145,7 @@ export function AgentWorkspace({
   return <section className="agent-desk">
     <div className="agent-chat">
       <header className="agent-chat-header">
-        <div className="agent-identity"><span><Bot/></span><div><strong>训练计划 Agent</strong><small>{running ? '正在选曲与安排训练' : '训练工具已就绪'}</small></div></div>
+        <div className="agent-identity"><span><Bot/></span><div><strong>舞蹈成长 Agent</strong><small>{running ? '正在理解问题与调用工具' : '对话与训练工具已就绪'}</small></div></div>
         <button className="icon-btn" onClick={() => setMessages([welcomeMessage])} aria-label="清空对话" title="清空对话"><Trash2/></button>
       </header>
       <div className="agent-thread" ref={threadRef} aria-live="polite">
@@ -151,7 +154,7 @@ export function AgentWorkspace({
           <div className="agent-bubble">
             <p>{message.content}</p>
             {message.tools?.length ? <div className="agent-tool-runs">{message.tools.map((item) => <div key={item.id} className={item.status}><span>{item.name.includes('search') || item.name.includes('read') ? <Search/> : item.status === 'done' ? <Check/> : <Wrench/>}</span><div><strong>{item.label}</strong><small>{item.summary}</small></div></div>)}</div> : null}
-            {message.role === 'assistant' && <small className="agent-source">{message.source === 'live' ? 'GPT Agent' : message.source === 'tool' ? '工作台数据' : '本地 Agent'}</small>}
+            {message.role === 'assistant' && <small className="agent-source">{message.source === 'live' ? 'GPT Agent' : message.source === 'tool' ? '工作台数据' : message.source === 'local' ? '离线工作台' : '系统引导'}</small>}
           </div>
         </article>)}
         {running && <article className="agent-message assistant"><span className="agent-avatar"><Bot/></span><div className="agent-bubble thinking"><div className="agent-count-run">{Array.from({ length: 8 }, (_, index) => <i key={index}>{index + 1}</i>)}</div><span><LoaderCircle/>正在读取上下文并编排训练</span></div></article>}
@@ -171,7 +174,7 @@ export function AgentWorkspace({
       <div className="agent-context-stats">
         <div><BrainCircuit/><strong>{memories.length}</strong><small>长期记忆</small></div>
         <div><Database/><strong>{knowledge.length}</strong><small>知识条目</small></div>
-        <div><Wrench/><strong>9</strong><small>训练工具</small></div>
+        <div><Wrench/><strong>13</strong><small>Agent Skills</small></div>
       </div>
       <section className="agent-context-list">
         <div className="agent-context-heading"><BrainCircuit/><strong>最近记忆</strong></div>

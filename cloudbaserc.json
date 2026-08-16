@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "envId": "dance-workbench-d0fsehk340b824c0",
+  "functionRoot": "server",
+  "functions": [
+    {
+      "name": "dance-agent",
+      "dir": ".",
+      "type": "HTTP",
+      "runtime": "Nodejs20.19",
+      "handler": "cloudFunction.main",
+      "timeout": 90,
+      "memorySize": 256,
+      "installDependency": false,
+      "description": "Dance workbench GPT Agent skill pipeline"
+    }
+  ]
+}

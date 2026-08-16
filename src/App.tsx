@@ -391,7 +391,7 @@ function AnalysisPage({ settings, exercises, completedIds, tracks, todayIds, res
   }
 
   return <div className="page ai-page">
-    <PageHeader eyebrow="Personal training agent" title="AI 训练计划 Agent" description="可以聊练舞、查询当前工作台，也能根据曲库、记忆和知识库安排训练。" action={<button className="secondary-btn compact" onClick={() => setShowSettings(true)}><Sparkles size={15}/>Agent 设置</button>}/>
+    <PageHeader eyebrow="Personal dance agent" title="AI 舞蹈成长 Agent" description="可以自然聊舞感与练舞方法，也能查询工作台并根据曲库、记忆和知识库安排训练。" action={<button className="secondary-btn compact" onClick={() => setShowSettings(true)}><Sparkles size={15}/>Agent 设置</button>}/>
     <div className="assistant-scope-note"><Dumbbell/><span><strong>工作台事实先查询，无法确认就明确说不知道</strong> 训练安排会读取当前进度，再检索动作和本地曲目，生成可以直接执行的计划与报告。</span></div>
     <AgentWorkspace exercises={exercises} tracks={tracks} completedIds={completedIds} todayIds={todayIds} settings={settings} onSetTodayPlan={onTodayPlanChange} onResult={onResult} latestResult={latestReport} onStartPlan={startPlan} notify={notify}/>
     {latestReport && <section className="agent-report-panel" aria-label="最新训练报告"><AssistantResultView result={latestReport} action={latestReport.plan && (latestReport.plan.mode === 'dance' ? latestReport.plan.trackIds?.length : latestReport.plan.exerciseIds.length) ? <button className="secondary-btn compact" onClick={() => startPlan(latestReport)}><Play size={15}/>{latestReport.plan.mode === 'dance' ? '进入随舞' : '开始训练'}</button> : undefined}/></section>}

@@ -22,6 +22,12 @@ export type AgentContext = {
   latestResult?: AssistantResult | null
 }
 
+const CLOUD_AGENT_ENDPOINT = 'https://dance-workbench-d0fsehk340b824c0.service.tcloudbase.com/api/agent'
+
+function defaultAgentEndpoint() {
+  return window.location.hostname.endsWith('.vercel.app') ? '/api/agent' : CLOUD_AGENT_ENDPOINT
+}
+
 export const INITIAL_AGENT_KNOWLEDGE: KnowledgeNote[] = [
   {
     id: 'knowledge-training-order',
@@ -35,13 +41,6 @@ export const INITIAL_AGENT_KNOWLEDGE: KnowledgeNote[] = [
     title: '训练选曲方法',
     content: '基本功计划随机排列曲库中的完整歌曲，按实际歌曲时长选足覆盖整份计划的曲目；歌曲结束后自动播放下一首。',
     tags: ['选曲', '训练计划'],
-    createdAt: '2026-08-14T00:00:00.000Z',
-  },
-  {
-    id: 'knowledge-camera-check',
-    title: '自拍视频检查点',
-    content: '固定正面全身机位，检查动作是否落拍、定格轮廓是否清楚、重心是否提前到位，以及连续两遍的力度是否一致。',
-    tags: ['复盘', '拍摄'],
     createdAt: '2026-08-14T00:00:00.000Z',
   },
 ]
@@ -443,7 +442,8 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
     tools.push(tool('search_exercises', '检索动作库', `动作库共 ${context.exercises.length} 项`))
     answers.push(`动作库当前有 ${context.exercises.length} 项：${context.exercises.map((item) => item.name).join('、')}。`)
   }
-  if (!answers.length && /^(你好|嗨|哈喽|hello|hi|早上好|下午好|晚上好|在吗|谢谢|谢谢你)[！!。,.，\s]*$/i.test(prompt)) answers.push('在的。可以和我聊练舞，也可以问我当前曲库、今日计划、记忆和知识库里的内容。')
+  if (!answers.length && /^(你好|嗨|哈喽|hello|hi|早上好|下午好|晚上好|在吗|谢谢|谢谢你)[！!。,.，\s]*$/i.test(prompt)) answers.push('我在。现在是离线工作台模式，曲库、计划和训练记录仍然可以查询；需要开放式对话时，请稍后重试云端 Agent。')
+  if (!answers.length && /^jazz[！!。,.，\s]*$/i.test(prompt)) answers.push('Jazz 舞通常强调节奏切分、身体线条、重心转换和表现力；但它不是单一固定风格，还会分成 Commercial Jazz、Street Jazz、Heels 等方向。现在是离线模式，如果你告诉我想了解哪一种，我可以先按本地基础知识给你一个练习入口。')
   if (!answers.length && /(扒舞|自己学舞|自学.*舞).*(怎么|方法|步骤)|怎么.*(扒舞|自己学舞)/.test(prompt)) answers.push('可以按“看结构、拆八拍、先脚后手、降速连段、原速复盘”来扒：先把视频分成 2 个八拍的小段，标出方向和重心；只练脚下，再加上身和手部；0.5–0.75 倍速连续成功两遍后再接下一段，最后录一遍对照动作落点。')
   if (!answers.length && /(什么风格|风格是什么|属于.*风格)/.test(prompt)) {
     const track = context.tracks.find((item) => prompt.toLowerCase().includes(item.title.toLowerCase()))
@@ -451,27 +451,46 @@ async function localAgent(prompt: string, context: AgentContext): Promise<AgentR
   }
   if (!answers.length && /(上周|昨天|之前|历史).*(练了|训练).*(多久|多少)/.test(prompt)) answers.push('我不知道。当前工作台没有记录这段时间的训练时长。')
   if (!answers.length && matchedNotes.length) answers.push(`${matchedNotes[0].title}：${matchedNotes[0].content}`)
-  if (!answers.length) answers.push('可以继续聊。涉及当前工作台的事实我会先查询；如果现有数据无法确认，我会直接说不知道。')
+  if (!answers.length) answers.push('云端 GPT 暂时没有连接成功，我不会用固定模板假装已经回答。当前工作台数据仍可查询和执行；开放式舞蹈问题请稍后重试。')
   await wait(650)
   return { answer: answers.join('\n'), source: 'local', tools, effects }
 }
 
 export async function runDanceAgent(prompt: string, context: AgentContext, history: AgentMessage[]): Promise<AgentRunResult> {
-  const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim()
+  const endpoint = import.meta.env.VITE_AGENT_PROXY_URL?.trim() || defaultAgentEndpoint()
+  const requestPayload = { prompt, context, history: history.slice(-10) }
+  let diagnostic = ''
   if (endpoint) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          cache: 'no-store',
+          body: JSON.stringify(requestPayload),
+        })
+        if (!response.ok) throw new Error(`Agent proxy returned ${response.status}`)
+        const payload = await response.json() as AgentRunResult
+        if (!payload.answer || !Array.isArray(payload.tools) || !Array.isArray(payload.effects)) throw new Error('Invalid agent result')
+        return payload
+      } catch (error) {
+        diagnostic = error instanceof Error ? error.message : '浏览器网络请求失败'
+        console.warn(`Dance Agent cloud request failed on attempt ${attempt + 1}.`, error)
+        if (attempt === 0) await wait(700)
+      }
+    }
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, context, history: history.slice(-10) }),
-      })
-      if (!response.ok) throw new Error(`Agent proxy returned ${response.status}`)
+      const fallbackUrl = `${endpoint}?payload=${encodeURIComponent(JSON.stringify(requestPayload))}&_=${Date.now()}`
+      const response = await fetch(fallbackUrl, { method: 'GET', cache: 'no-store' })
+      if (!response.ok) throw new Error(`Agent GET fallback returned ${response.status}`)
       const payload = await response.json() as AgentRunResult
-      if (!payload.answer || !Array.isArray(payload.tools) || !Array.isArray(payload.effects)) throw new Error('Invalid agent result')
+      if (!payload.answer || !Array.isArray(payload.tools) || !Array.isArray(payload.effects)) throw new Error('Invalid Agent GET result')
       return payload
-    } catch {
-      // The local tool runner keeps the Agent usable when the GPT proxy is unavailable.
+    } catch (error) {
+      diagnostic = error instanceof Error ? error.message : diagnostic || '浏览器网络请求失败'
+      console.warn('Dance Agent GET fallback failed.', error)
     }
   }
-  return localAgent(prompt, context)
+  const result = await localAgent(prompt, context)
+  return { ...result, diagnostic: diagnostic || '云端 Agent 地址不可用' }
 }

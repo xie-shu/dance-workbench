@@ -1,15 +1,22 @@
 import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
 
-const port = Number(process.env.AI_PROXY_PORT || 8787)
+const port = Number(process.env.PORT || process.env.AI_PROXY_PORT || 8787)
 const apiKey = process.env.OPENAI_API_KEY
 const model = process.env.OPENAI_MODEL || 'gpt-5-mini'
 const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
 const apiMode = process.env.OPENAI_API_MODE || 'responses'
 const requestTimeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 90_000)
-const allowedOrigins = new Set((process.env.AI_ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:41733,https://xie-shu.github.io').split(',').map((value) => value.trim()).filter(Boolean))
+const modelRequestMaxAttempts = 3
+const allowedOrigins = new Set((process.env.AI_ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:41733,https://xie-shu.github.io,https://dance-workbench-d0fsehk340b824c0-1469379714.tcloudbaseapp.com').split(',').map((value) => value.trim()).filter(Boolean))
+const applicationOwnsCors = process.env.AI_CORS_MODE === 'application'
 const hits = new Map()
 
 const agentTools = [
+  {
+    type: 'function', name: 'read_current_time', description: '读取当前日期、星期和时间。回答当前日期或星期前必须调用。', strict: true,
+    parameters: { type: 'object', additionalProperties: false, required: [], properties: {} },
+  },
   {
     type: 'function', name: 'read_training_context', description: '读取当前工作台统计、今日计划、完成记录和 Agent 设置。制定计划或回答这些当前事实前必须调用。', strict: true,
     parameters: { type: 'object', additionalProperties: false, required: [], properties: {} },
@@ -49,17 +56,17 @@ const agentTools = [
 ]
 
 const toolLabels = {
-  read_training_context: '读取训练上下文', read_memory: '读取长期记忆', search_knowledge: '检索舞蹈知识库', search_exercises: '检索动作库', search_tracks: '检索本地曲库',
+  read_current_time: '读取当前日期', read_training_context: '读取训练上下文', read_memory: '读取长期记忆', search_knowledge: '检索舞蹈知识库', search_exercises: '检索动作库', search_tracks: '检索本地曲库',
   set_today_plan: '更新今日计划', save_memory: '写入长期记忆', add_knowledge_note: '写入知识库', create_training_report: '生成训练报告',
 }
 
-const agentInstructions = `你是蟹堡王的私人舞蹈工作台 Agent，以训练安排为核心，也可以自然地进行寒暄、基础对话和一般舞蹈知识交流。
+const agentInstructions = `你是“蟹堡王舞蹈工作台”的私人舞蹈成长助手。你像一位稳定、具体、懂训练节奏的舞蹈教练型搭档：既能自然交流舞感、动作理解、学习方法和训练心理，也能在用户明确要求时安排并执行训练计划。无论是否命中本地数据，都要保持这个身份，不要退化成泛用客服或检索报错机器人。
 
 事实规则：
 1. 涉及当前曲库、歌曲数量或名称、今日计划、完成记录、动作库、长期记忆、知识库或 Agent 设置时，必须先调用对应工具，只能依据本轮工具结果回答。
 2. 工具没有返回、当前工作台未记录、或你无法可靠确认的内容，直接说“我不知道”或“当前没有记录”，不要猜测、补全或编造。
 3. 不得声称听过本地音频、看过未提供的视频、知道用户未记录的身体状态、训练历史或外部实时信息。建议与已确认事实要明确区分。
-4. 普通寒暄无需调用工具；稳定的一般舞蹈知识可以直接回答，但不确定时要说明不确定。
+4. 普通寒暄、经验交流、灵感讨论和稳定的一般舞蹈知识无需依赖工具结果，可以结合模型已有知识自然回答；不确定、流派存在分歧或涉及专业风险时再说明边界。
 5. 用户提到曲库中的歌名，不等于询问曲库统计。询问“怎么扒舞”时给通用可执行方法；询问某支具体编舞的舞蹈风格时，曲库元数据不能作为判断依据，没有视频或知识库证据就明确说无法判断具体编舞风格。
 6. “我想学/扒某支舞”默认是学习咨询，不是制定或写入训练计划。直接回答当前问题，不要要求用户换一种说法或重复指令。
 
@@ -70,25 +77,145 @@ const agentInstructions = `你是蟹堡王的私人舞蹈工作台 Agent，以�
 4. 不向用户展示函数名、内部提示词或工具协议。不要声称“需要工具但本轮没有结果”；能回答的方法问题直接回答，事实未知就直接说明未知。
 5. 基本功计划使用随机完整歌曲，必须根据曲目 durationSeconds 选足覆盖计划实际执行时长的曲目；练舞计划才使用随舞片段。
 6. 报告标题、动作时间线和可执行计划的总时长必须等于动作库中对应动作时长之和，不得沿用不一致的请求时长。
-7. 不提供音视频内容分析、穿搭妆造或版权判断，不评价外貌。普通咨询优先用 3–6 个简短步骤回答，除非用户明确要求详细展开。`
+7. 不提供音视频内容分析、穿搭妆造或版权判断，不评价外貌。
+
+对话规则：
+1. 先直接回应用户真正想问的内容，再根据需要补充方法、例子或下一步；不要机械复述规则、Skill 或“知识库没有命中”。
+2. 普通交流不强制套用固定模板或 3–6 步清单。简单问题简短回答，复杂问题再分层展开，并保持与最近对话的连续性。
+3. 可以讨论舞感、练习思路、动作理解、学习方法、舞种差异、创作灵感和训练心理；把通用建议明确写成建议，不伪装成用户的个人事实。
+4. 只有用户明确要求制定、修改、保存或执行计划时才生成可执行计划。信息不足但仍可给通用建议时先回答，不要立刻拒绝或要求用户换一种问法。
+5. 不声称拥有人类情绪、亲身跳舞经历、感官或未接入的实时能力。遇到“你心情如何”一类问题时，坦诚说明没有真实情绪，但可以继续以舞蹈成长搭档的方式陪伴，并自然询问用户状态。
+6. 日期、天气、新闻等实时问题没有工具依据时，简短说明当前无法可靠确认，再提供 1～2 个与舞蹈成长相关且立刻可做的选项；不要只回答一句“不知道”。
+7. 默认控制回答长度：寒暄和简单问题 1～3 段，方法问题优先给 3～5 个最有价值的要点；用户明确要求详细时再展开。`
+
+const agentSkills = [
+  {
+    id: 'fundamentals-plan',
+    label: '基本功计划 Skill',
+    description: '制定或调整基本功训练计划，并匹配完整歌曲。',
+    tools: ['read_training_context', 'read_memory', 'search_knowledge', 'search_exercises', 'search_tracks'],
+    sop: ['读取训练上下文和身体状态', '检索基本功知识与动作', '检索私人曲库', '生成并校验可执行计划'],
+  },
+  {
+    id: 'random-dance-plan',
+    label: '随舞计划 Skill',
+    description: '生成、增删或重新排序随舞歌曲计划。',
+    tools: ['read_training_context', 'read_memory', 'search_knowledge', 'search_tracks'],
+    sop: ['读取当前随舞计划', '检索可播放歌曲', '按要求增删或洗牌', '校验片段与倒计时时长'],
+  },
+  {
+    id: 'music-library-query',
+    label: '曲库查询 Skill',
+    description: '回答私人曲库数量、歌曲、状态和时长等事实。',
+    tools: ['search_tracks'],
+    sop: ['检索私人曲库', '只依据歌曲元数据回答'],
+  },
+  {
+    id: 'dance-knowledge-qa',
+    label: '舞蹈知识交流 Skill',
+    description: '使用模型的稳定通用知识回答舞蹈方法、舞感、风格、学习和训练问题，不读取私人数据。',
+    tools: [],
+    sop: ['理解用户真正的问题', '使用稳定通用舞蹈知识', '以私人舞蹈成长助手身份自然回答'],
+  },
+  {
+    id: 'knowledge-library-query',
+    label: '个人知识库查询 Skill',
+    description: '用户明确询问个人知识库内容，或要求根据个人知识库回答时使用。',
+    tools: ['search_knowledge'],
+    sop: ['检索个人舞蹈知识库', '区分检索证据与通用知识', '依据证据回答个人资料事实'],
+  },
+  {
+    id: 'training-context-query',
+    label: '训练上下文 Skill',
+    description: '查询今日计划、完成记录和工作台统计。',
+    tools: ['read_training_context'],
+    sop: ['读取当前训练上下文', '按实际记录回答'],
+  },
+  {
+    id: 'memory-query',
+    label: '记忆查询 Skill',
+    description: '查询 Agent 已保存的个人长期记忆。',
+    tools: ['read_memory'],
+    sop: ['读取相关长期记忆', '按实际记录回答'],
+  },
+  {
+    id: 'memory-save',
+    label: '记忆写入 Skill',
+    description: '保存用户明确要求记住的偏好、目标、身体状态或习惯。',
+    tools: [],
+    sop: ['提取用户明确表达的信息', '分类并写入长期记忆', '确认保存内容'],
+  },
+  {
+    id: 'knowledge-save',
+    label: '知识写入 Skill',
+    description: '把用户明确指定的内容保存到个人知识库。',
+    tools: [],
+    sop: ['提取笔记正文', '生成标题与标签', '写入知识库'],
+  },
+  {
+    id: 'exercise-library-query',
+    label: '动作库查询 Skill',
+    description: '查询基本功动作库。',
+    tools: ['search_exercises'],
+    sop: ['检索动作库', '按动作元数据回答'],
+  },
+  {
+    id: 'unsupported-media-analysis',
+    label: '能力边界 Skill',
+    description: '处理当前尚未接入的音频或视频内容分析请求。',
+    tools: [],
+    sop: ['检查当前工具能力', '明确说明缺少的分析能力'],
+  },
+  {
+    id: 'general-chat',
+    label: '基础对话 Skill',
+    description: '普通寒暄和不依赖私人数据的一般舞蹈交流。',
+    tools: [],
+    sop: ['判断是否需要私人事实', '直接回答稳定知识或说明不确定'],
+  },
+  {
+    id: 'current-date-query',
+    label: '当前日期查询 Skill',
+    description: '回答今天的日期、星期或当前时间，只读取系统当前时间。',
+    tools: ['read_current_time'],
+    sop: ['读取当前系统时间', '按用户所在时区格式化', '直接回答日期事实'],
+  },
+]
+
+const skillsById = new Map(agentSkills.map((skill) => [skill.id, skill]))
 
 async function requestModel(path, body) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(requestTimeoutMs),
-  })
-  const raw = await response.text()
-  let payload
-  try {
-    payload = JSON.parse(raw)
-  } catch {
-    const contentType = response.headers.get('content-type') || 'unknown content type'
-    throw new Error(`Model provider returned non-JSON (${response.status}, ${contentType})`)
+  let lastError
+  for (let attempt = 0; attempt < modelRequestMaxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      })
+      const raw = await response.text()
+      let payload
+      try {
+        payload = JSON.parse(raw)
+      } catch {
+        const contentType = response.headers.get('content-type') || 'unknown content type'
+        throw new Error(`Model provider returned non-JSON (${response.status}, ${contentType})`)
+      }
+      if (response.ok) return payload
+      const error = new Error(`Model request failed (${response.status}): ${payload.error?.message || 'Unknown API error'}`)
+      if (response.status !== 429 && response.status < 500) {
+        error.nonRetryable = true
+        throw error
+      }
+      lastError = error
+    } catch (error) {
+      if (error?.nonRetryable) throw error
+      lastError = error
+    }
+    if (attempt < modelRequestMaxAttempts - 1) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)))
   }
-  if (!response.ok) throw new Error(`Model request failed (${response.status}): ${payload.error?.message || 'Unknown API error'}`)
-  return payload
+  throw lastError || new Error('Model request failed')
 }
 
 function searchScore(query, value) {
@@ -367,7 +494,20 @@ function addReferencedTrackRun(runs, tracks) {
 function executeAgentTool(call, context, effects, runs) {
   const args = JSON.parse(call.arguments || '{}')
   let result
-  if (call.name === 'read_training_context') {
+  if (call.name === 'read_current_time') {
+    const current = new Date()
+    const formatter = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+    result = { iso: current.toISOString(), timeZone: 'Asia/Shanghai', formatted: formatter.format(current) }
+  } else if (call.name === 'read_training_context') {
     result = {
       counts: {
         tracks: (context.tracks || []).length,
@@ -439,9 +579,164 @@ function executeAgentTool(call, context, effects, runs) {
         ? `动作库共 ${result.totalCount} 项 · 返回 ${result.matches.length} 项`
         : call.name === 'read_training_context'
           ? `今日 ${result.counts.todayPlan} 项 · 已完成 ${result.counts.completed} 项`
+          : call.name === 'read_current_time'
+            ? result.formatted
           : Array.isArray(result) ? `返回 ${count} 条结果` : '执行完成'
   runs.push({ id: makeId(), name: call.name, label: toolLabels[call.name] || call.name, summary, status: count ? 'done' : 'skipped' })
   return result
+}
+
+function deterministicSkillHint(prompt, context = {}) {
+  const text = String(prompt)
+  if (/(今天|今日|现在|当前).*(星期几|周几|几号|日期|几点|时间)|(星期几|周几).*(今天|今日)/.test(text)) return 'current-date-query'
+  if (isPlanningRequest(text, context)) return planModeForPrompt(text, context) === 'dance' ? 'random-dance-plan' : 'fundamentals-plan'
+  if (isTrackLibraryFactRequest(text, context)) return 'music-library-query'
+  if (/(加入知识库|保存为笔记|记到知识库)/.test(text)) return 'knowledge-save'
+  if (/(我的|个人|当前|工作台).*(知识库|知识条目|笔记)|(知识库|知识条目).*(多少|几条|有哪些|有哪|检索|查找|根据)/.test(text)) return 'knowledge-library-query'
+  if (/(长期记忆|记得我|我的记忆|记录了我)/.test(text)) return 'memory-query'
+  if (/(记住|以后|我喜欢|我不喜欢|我.*(?:不舒服|旧伤)|目标是)/.test(text)) return 'memory-save'
+  if (/(今日计划|今天的计划|当前计划|完成记录|完成了|Agent 设置|训练上下文|上周|昨天|训练历史)/.test(text)) return 'training-context-query'
+  if (/(动作库|基本功动作|有哪些动作)/.test(text)) return 'exercise-library-query'
+  if (/(分析|识别|检测).*(音频|音乐文件|视频|动作视频)|(音频|视频).*(分析|识别|检测)/.test(text)) return 'unsupported-media-analysis'
+  if (/(基本功|扒舞|动作|律动|groove|isolation|练舞|舞蹈).*(怎么|方法|技巧|标准|错误|注意|为什么)|怎么.*(扒舞|练舞|基本功)/i.test(text)) return 'dance-knowledge-qa'
+  return 'general-chat'
+}
+
+function parseJsonObject(value) {
+  const source = String(value || '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim()
+  const start = source.indexOf('{')
+  const end = source.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+  try {
+    return JSON.parse(source.slice(start, end + 1))
+  } catch {
+    return null
+  }
+}
+
+async function requestPlainText(instructions, input, history = []) {
+  if (apiMode === 'chat-completions') {
+    const payload = await requestModel('/chat/completions', {
+      model,
+      messages: [
+        { role: 'system', content: instructions },
+        ...history.slice(-8).map((message) => ({ role: message.role === 'user' ? 'user' : 'assistant', content: message.content })),
+        { role: 'user', content: input },
+      ],
+    })
+    return payload.choices?.[0]?.message?.content || ''
+  }
+  const payload = await requestModel('/responses', { model, instructions, input })
+  return outputText(payload)
+}
+
+async function classifySkill(input) {
+  const hint = deterministicSkillHint(input.prompt, input.context)
+  return { skillId: hint, confidence: 0.95, reason: '按工作台意图规则完成路由' }
+}
+
+function executeSkillRetrieval(skill, input, effects, runs) {
+  const results = {}
+  const context = input.context || {}
+  for (const name of skill.tools) {
+    let argumentsValue = {}
+    if (name === 'read_memory' || name === 'search_knowledge') argumentsValue = { query: input.prompt }
+    if (name === 'search_exercises') argumentsValue = { query: input.prompt, limit: 8 }
+    if (name === 'search_tracks') argumentsValue = { query: input.prompt, status: /待复习/.test(input.prompt) ? 'review' : 'all' }
+    results[name] = executeAgentTool({ name, arguments: JSON.stringify(argumentsValue) }, context, effects, runs)
+  }
+  return results
+}
+
+function applyWriteSkill(skillId, prompt, effects, runs) {
+  if (skillId === 'memory-save') {
+    const content = String(prompt).replace(/^(请|帮我)?记住[：:]?\s*/, '').split(/[，,。；;]?然后/)[0].trim()
+    if (!content) return
+    const category = /(疼|不舒服|旧伤|受伤)/.test(content) ? 'body' : /(目标|想学|想练)/.test(content) ? 'goal' : /(每天|每周|习惯|通常)/.test(content) ? 'routine' : 'preference'
+    const memory = { id: makeId(), category, content, createdAt: new Date().toISOString() }
+    effects.push({ type: 'save_memory', memory })
+    runs.push({ id: makeId(), name: 'save_memory', label: toolLabels.save_memory, summary: content, status: 'done' })
+  }
+  if (skillId === 'knowledge-save') {
+    const content = String(prompt).replace(/(请|帮我|把)?(加入知识库|保存为笔记|记到知识库)[：:]?/g, '').trim()
+    if (!content) return
+    const tags = String(content).split(/[\s，。！？、,.!?：:；;（）()\-_/]+/).filter((item) => item.length > 1).slice(0, 5)
+    const note = { id: makeId(), title: content.slice(0, 18), content, tags, createdAt: new Date().toISOString() }
+    effects.push({ type: 'add_knowledge', note })
+    runs.push({ id: makeId(), name: 'add_knowledge_note', label: toolLabels.add_knowledge_note, summary: note.title, status: 'done' })
+  }
+}
+
+function verifiedPlanFromEffects(effects) {
+  return effects.find((effect) => effect.type === 'save_assistant_result' && effect.result?.plan)?.result || null
+}
+
+function deterministicFallback(skillId, retrieval, effects, context = {}) {
+  const report = verifiedPlanFromEffects(effects)
+  if (report?.plan?.mode === 'dance') {
+    const count = report.plan.trackIds?.length || 0
+    const seconds = (report.plan.musicDurationSeconds || 0) + count * 5
+    return `已生成 ${count} 首歌曲的随舞计划，预计 ${timeLabel(seconds)}（含每首前 5 秒倒计时）。确认后会按计划顺序播放。`
+  }
+  if (report?.plan) return `已生成 ${report.plan.totalMinutes} 分钟基本功计划，并安排 ${report.plan.trackIds?.length || 0} 首完整歌曲。确认后可以直接开始。`
+  if (skillId === 'music-library-query') {
+    const result = retrieval.search_tracks
+    if (!result) return '我不知道，当前无法读取曲库。'
+    return result.totalCount ? `曲库现在有 ${result.totalCount} 首歌，其中 ${result.reviewCount} 首待复习。` : '曲库现在是空的。'
+  }
+  if (skillId === 'training-context-query') {
+    const result = retrieval.read_training_context
+    if (!result) return '我不知道，当前无法读取训练记录。'
+    return `今日计划有 ${result.counts.todayPlan} 项，目前完成 ${result.counts.completed} 项。`
+  }
+  if (skillId === 'memory-query') return (retrieval.read_memory || []).length ? `当前读取到 ${(retrieval.read_memory || []).length} 条相关长期记忆。` : '当前没有记录相关长期记忆。'
+  if (skillId === 'exercise-library-query') return retrieval.search_exercises ? `动作库当前有 ${retrieval.search_exercises.totalCount} 项。` : '我不知道，当前无法读取动作库。'
+  if (skillId === 'current-date-query') return retrieval.read_current_time?.formatted ? `现在是 ${retrieval.read_current_time.formatted}。` : '我不知道，当前无法读取系统时间。'
+  if (skillId === 'knowledge-library-query') {
+    const result = retrieval.search_knowledge
+    if (!result) return '我不知道，当前无法读取个人知识库。'
+    return result.matches?.length
+      ? `个人知识库中检索到 ${result.matches.length} 条相关内容：${result.matches.map((item) => item.title).join('、')}。`
+      : `个人知识库当前有 ${result.totalCount} 条内容，但没有检索到与这个问题直接相关的记录。`
+  }
+  if (skillId === 'dance-knowledge-qa') {
+    return '云端 GPT 本轮没有返回可用结果，我不会把“知识库未命中”误当成这个问题没有答案。请稍后重试。'
+  }
+  if (skillId === 'unsupported-media-analysis') return '当前工作台还没有接入可靠的音频或视频内容分析工具，所以我不能假装已经分析过。'
+  const saved = effects.find((effect) => effect.type === 'save_memory')?.memory
+  if (saved) return `已记住：${saved.content}`
+  const note = effects.find((effect) => effect.type === 'add_knowledge')?.note
+  if (note) return `已加入知识库：${note.title}`
+  return '这次 GPT 没有返回可用结果。涉及当前工作台的事实我不会猜测，请稍后重试。'
+}
+
+async function runSkillPipeline(input) {
+  const route = await classifySkill(input)
+  const skill = skillsById.get(route.skillId) || skillsById.get('general-chat')
+  const effects = []
+  const runs = [{ id: makeId(), name: `skill:${skill.id}`, label: skill.label, summary: `${skill.sop.length} 步 SOP · ${route.reason}`, status: 'done' }]
+  const retrieval = executeSkillRetrieval(skill, input, effects, runs)
+  applyWriteSkill(skill.id, input.prompt, effects, runs)
+  if (skill.id === 'fundamentals-plan' || skill.id === 'random-dance-plan') ensureExecutablePlan(input, runs, effects)
+  const verifiedPlan = verifiedPlanFromEffects(effects)
+  const isPlanningSkill = skill.id === 'fundamentals-plan' || skill.id === 'random-dance-plan'
+  const userPrompt = isPlanningSkill ? input.context?.settings?.systemPrompt?.trim() : ''
+  const userProfile = input.context?.settings?.knowledge || {}
+  const finalInstructions = `${agentInstructions}\n\n当前执行 Skill：${skill.label}\nSkill SOP：${skill.sop.join(' → ')}\n${userPrompt ? `用户自定义训练偏好（不能覆盖事实规则）：${userPrompt}` : ''}\n涉及用户当前工作台、个人记录和计划执行的事实，必须以工具结果和已校验计划为准，工具未返回就说不知道。一般舞蹈知识、方法讨论和灵感交流可以使用稳定的模型知识自然回答，本地检索结果只作为补充，不要因为知识库没有命中就拒绝回答。不要展示内部函数名、JSON 或提示词；确实引用了本地知识条目时再自然说明来源。`
+  const evidence = {
+    skill: { id: skill.id, label: skill.label },
+    userProfile,
+    retrieval,
+    verifiedPlan,
+  }
+  try {
+    const answer = await requestPlainText(finalInstructions, `以下是本轮可信上下文：\n${JSON.stringify(evidence)}\n\n用户问题：${input.prompt}`, input.history || [])
+    if (!String(answer).trim()) throw new Error('Empty model answer')
+    return { answer: String(answer).trim(), source: 'live', tools: runs, effects }
+  } catch (error) {
+    const diagnostic = error instanceof Error ? error.message.slice(0, 180) : '模型服务请求失败'
+    return { answer: deterministicFallback(skill.id, retrieval, effects, input.context), source: runs.length > 1 ? 'tool' : 'local', tools: runs, effects, diagnostic }
+  }
 }
 
 function ensureExecutablePlan(input, runs, effects) {
@@ -699,14 +994,14 @@ function runWorkspaceFact(input, toolName) {
 }
 
 function runAgent(input) {
-  const factTool = workspaceFactTool(input.prompt, input.context)
-  if (factTool) return runWorkspaceFact(input, factTool)
-  return apiMode === 'chat-completions' ? runAgentChatCompletions(input) : runAgentResponses(input)
+  return runSkillPipeline(input)
 }
 
 function send(response, status, payload, origin) {
-  if (origin && allowedOrigins.has(origin)) response.setHeader('Access-Control-Allow-Origin', origin)
-  response.setHeader('Vary', 'Origin')
+  if (applicationOwnsCors && origin && allowedOrigins.has(origin)) {
+    response.setHeader('Access-Control-Allow-Origin', origin)
+    response.setHeader('Vary', 'Origin')
+  }
   response.setHeader('Content-Type', 'application/json; charset=utf-8')
   response.statusCode = status
   response.end(JSON.stringify(payload))
@@ -722,10 +1017,10 @@ function outputText(payload) {
   return ''
 }
 
-createServer(async (request, response) => {
+const server = createServer(async (request, response) => {
   const origin = request.headers.origin || ''
   if (request.method === 'OPTIONS') {
-    if (allowedOrigins.has(origin)) {
+    if (applicationOwnsCors && allowedOrigins.has(origin)) {
       response.setHeader('Access-Control-Allow-Origin', origin)
       response.setHeader('Access-Control-Allow-Headers', 'Content-Type')
       response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -734,7 +1029,12 @@ createServer(async (request, response) => {
     response.end()
     return
   }
-  if (request.method !== 'POST' || request.url !== '/api/agent') return send(response, 404, { error: 'Not found' }, origin)
+  if (request.method === 'GET' && request.url === '/health') {
+    return send(response, 200, { ok: true, mode: apiMode, model, skillCount: agentSkills.length }, origin)
+  }
+  const agentUrl = new URL(request.url || '/', 'http://localhost')
+  const isAgentRequest = agentUrl.pathname === '/api/agent'
+  if (!isAgentRequest || !['GET', 'POST'].includes(request.method)) return send(response, 404, { error: 'Not found' }, origin)
   if (origin && !allowedOrigins.has(origin)) return send(response, 403, { error: 'Origin not allowed' }, origin)
   if (!apiKey) return send(response, 503, { error: 'OPENAI_API_KEY is not configured' }, origin)
 
@@ -745,15 +1045,20 @@ createServer(async (request, response) => {
   recent.push(now)
   hits.set(client, recent)
 
-  let raw = ''
-  for await (const chunk of request) {
-    raw += chunk
-    if (raw.length > 1_000_000) return send(response, 413, { error: 'Request too large' }, origin)
-  }
-
   let input
   try {
-    input = JSON.parse(raw)
+    if (request.method === 'GET') {
+      const encoded = agentUrl.searchParams.get('payload')
+      if (!encoded) throw new Error('Missing payload')
+      input = JSON.parse(encoded)
+    } else {
+      let raw = ''
+      for await (const chunk of request) {
+        raw += chunk
+        if (raw.length > 1_000_000) return send(response, 413, { error: 'Request too large' }, origin)
+      }
+      input = JSON.parse(raw)
+    }
   } catch {
     return send(response, 400, { error: 'Invalid JSON request' }, origin)
   }
@@ -764,6 +1069,22 @@ createServer(async (request, response) => {
     console.error('Dance API request failed:', error instanceof Error ? error.message : 'Unknown error')
     return send(response, 502, { error: 'AI provider request failed' }, origin)
   }
-}).listen(port, () => {
-  console.log(`Dance AI proxy listening on http://localhost:${port}`)
 })
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  server.listen(port, () => {
+    console.log(`Dance AI proxy listening on http://localhost:${port}`)
+  })
+}
+
+export const testInternals = {
+  agentSkills,
+  allocateExerciseMinutes,
+  buildDancePlan,
+  deterministicSkillHint,
+  parseChineseInteger,
+  parseJsonObject,
+  seededTrackQueue,
+}
+
+export { runAgent as runAgentRequest }
